@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Splash screen: app theme blue bg + centered logo2 (API 21+) -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- App theme blue background -->
+    <item android:drawable="@color/splash_bg" />
+
+    <!-- Centered logo -->
+    <item>
+        <bitmap
+            android:gravity="center"
+            android:src="@drawable/splash_logo" />
+    </item>
+</layer-list>

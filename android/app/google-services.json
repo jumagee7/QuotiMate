@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "1018388763527",
+    "project_id": "quotimate-cloud",
+    "storage_bucket": "quotimate-cloud.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1018388763527:android:bcbbac2d0ee8df1d0e3922",
+        "android_client_info": {
+          "package_name": "com.majumaink.quotimate"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "1018388763527-73pvcf74mukj1lqcrapgn1o9im0anq1j.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.majumaink.quotimate",
+            "certificate_hash": "1adbc8a3b57fc3dc69ea7796b58596e3b5524310"
+          }
+        },
+        {
+          "client_id": "1018388763527-25msbi7ertqmog8i1jnhn525vcph7liv.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCpwFl0YHaE0NChko6YUeL7ZbC8AU1Nt7o"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "1018388763527-25msbi7ertqmog8i1jnhn525vcph7liv.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- App theme blue - matches home screen background 0xFF0B0E17 -->
+    <color name="splash_bg">#0B0E17</color>
+	<color name="ic_launcher_background">#05111B</color>
+</resources>
