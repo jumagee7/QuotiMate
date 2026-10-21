@@ -445,6 +445,20 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// Full JSON backup of all business data (used by Settings → Export Data).
+  String exportBackupJson() => const JsonEncoder.withIndent('  ').convert({
+    'exportedAt': DateTime.now().toIso8601String(),
+    'company': companyName,
+    'clients': _clients.map((e) => e.toJson()).toList(),
+    'products': _products.map((e) => e.toJson()).toList(),
+    'quotes': _quotes.map((e) => e.toJson()).toList(),
+    'invoices': _invoices.map((e) => e.toJson()).toList(),
+    'tasks': _tasks.map((e) => e.toJson()).toList(),
+    'events': _events.map((e) => e.toJson()).toList(),
+    'projects': _projects.map((e) => e.toJson()).toList(),
+    'activities': _activities.map((e) => e.toJson()).toList(),
+  });
+
   Future<void> _save() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_kSeeded, true);

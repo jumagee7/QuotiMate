@@ -1,3 +1,5 @@
+import 'package:intl/intl.dart';
+import 'dart:typed_data';
 // pages/settings_page.dart â€” QuotiMate Settings & Preferences
 
 import 'package:flutter/material.dart';
@@ -356,11 +358,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     ),
                   ),
                   ElevatedButton.icon(
-                    onPressed: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Export coming soon'), backgroundColor: Color(0xFF161B26)),
-                      );
-                    },
+                    onPressed: () => _exportData(context, appState),
                     icon: const Icon(Icons.download_outlined, size: 16),
                     label: const Text('Export Data'),
                     style: ElevatedButton.styleFrom(
@@ -1048,6 +1046,29 @@ class _SettingsPageState extends State<SettingsPage> {
       filled: true,
       fillColor: const Color(0xFF0F162C),
     );
+  }
+
+  Future<void> _exportData(BuildContext context, AppState appState) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final bytes = Uint8List.fromList(utf8.encode(appState.exportBackupJson()));
+    final name = 'quotimate_backup_${DateFormat('yyyyMMdd_HHmm').format(DateTime.now())}.json';
+    try {
+      String? path = await FilePicker.platform.saveFile(
+        dialogTitle: 'Export QuotiMate data',
+        fileName: name,
+        type: FileType.custom,
+        allowedExtensions: const ['json'],
+        bytes: bytes,
+      );
+      if (path == null) return;
+      final file = File(path);
+      if (!await file.exists() || await file.length() == 0) await file.writeAsBytes(bytes);
+      messenger.showSnackBar(SnackBar(content: Text('Data exported to $path'), backgroundColor: const Color(0xFF161B26)));
+    } catch (_) {
+      final dir = await getApplicationDocumentsDirectory();
+      final file = await File('${dir.path}/$name').writeAsBytes(bytes);
+      messenger.showSnackBar(SnackBar(content: Text('Data exported to ${file.path}'), backgroundColor: const Color(0xFF161B26)));
+    }
   }
 
   void _confirmClearQuotes(BuildContext ctx, AppState appState) {
