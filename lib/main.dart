@@ -120,7 +120,7 @@ class _SplashScreenState extends State<_SplashScreen> with SingleTickerProviderS
             mainAxisSize: MainAxisSize.min,
             children: [
               Image.asset(
-                'assets/logo2.png',
+                'assets/modernedge_logo.png',
                 width: 220,
                 filterQuality: FilterQuality.high,
               ),

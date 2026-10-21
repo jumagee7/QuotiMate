@@ -122,7 +122,7 @@ class _QuotiMateShellState extends State<QuotiMateShell> {
                           color: const Color(0xFFFFC107).withValues(alpha: 0.15),
                           borderRadius: BorderRadius.circular(8),
                         ),
-                        child: Image.asset('assets/logo2.png', width: 24, height: 24),
+                        child: Image.asset('assets/modernedge_icon.png', width: 24, height: 24),
                       ),
                       const SizedBox(width: 10),
                       Text(

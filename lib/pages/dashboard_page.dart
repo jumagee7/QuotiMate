@@ -379,76 +379,75 @@ class _RecentQuotesGrid extends StatelessWidget {
 // â”€â”€ Activity Panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class _ActivityPanel extends StatelessWidget {
-  final List<String> activities;
+  final List<ActivityEntry> activities;
   const _ActivityPanel({required this.activities});
+
+  static String _relative(DateTime t) {
+    final d = DateTime.now().difference(t);
+    if (d.inMinutes < 1) return 'Just now';
+    if (d.inMinutes < 60) return '${d.inMinutes} min ago';
+    if (d.inHours < 24) return '${d.inHours} h ago';
+    if (d.inDays < 7) return '${d.inDays} d ago';
+    return DateFormat('dd MMM yyyy').format(t);
+  }
 
   @override
   Widget build(BuildContext context) {
-    // We mock the image's layout here
-    final activityData = [
-      {'color': Colors.blue, 'title': 'Quotation #Q-1021 approved', 'time': '10:45 AM'},
-      {'color': Colors.yellow, 'title': "Client 'ABC Ltd' added", 'time': '9:30 AM'},
-      {'color': Colors.green, 'title': "Product 'Industrial Motor' updated", 'time': '8:00 AM'},
-    ];
-    
+    final items = activities.take(6).toList();
     return Container(
+      width: double.infinity,
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: const Color(0xFF161B26),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: const Color(0xFF2A3045), width: 1),
       ),
-      child: Column(
-        children: activityData.asMap().entries.map((e) {
-          final isLast = e.key == activityData.length - 1;
-          final item = e.value;
-          return Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Column(
-                children: [
-                  Container(
-                    width: 14, height: 14,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: (item['color'] as Color).withValues(alpha: 0.2),
+      child: items.isEmpty
+          ? const Padding(
+              padding: EdgeInsets.symmetric(vertical: 12),
+              child: Text('No activity yet. Create a quote, client or project to see it here.',
+                  style: TextStyle(color: Color(0xFF8A92A6), fontSize: 13)),
+            )
+          : Column(
+              children: items.asMap().entries.map((e) {
+                final isLast = e.key == items.length - 1;
+                final item = e.value;
+                final color = item.type.color;
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Column(
+                      children: [
+                        Container(
+                          width: 26, height: 26,
+                          decoration: BoxDecoration(shape: BoxShape.circle, color: color.withValues(alpha: 0.18)),
+                          child: Icon(item.type.icon, size: 14, color: color),
+                        ),
+                        if (!isLast) Container(
+                          width: 2, height: 30,
+                          color: const Color(0xFF2A3045),
+                          margin: const EdgeInsets.only(top: 4),
+                        ),
+                      ],
                     ),
-                    child: Center(
-                      child: Container(
-                        width: 6, height: 6,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: item['color'] as Color,
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.only(top: 3),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(item.title, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500)),
+                            const SizedBox(height: 4),
+                            Text(_relative(item.timestamp), style: const TextStyle(color: Color(0xFF8A92A6), fontSize: 11)),
+                          ],
                         ),
                       ),
                     ),
-                  ),
-                  if (!isLast) Container(
-                    width: 2,
-                    height: 40,
-                    color: const Color(0xFF2A3045),
-                    margin: const EdgeInsets.only(top: 4),
-                  ),
-                ],
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.only(top: 2),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(item['title'] as String, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500)),
-                      const SizedBox(height: 4),
-                      Text(item['time'] as String, style: const TextStyle(color: Color(0xFF8A92A6), fontSize: 11)),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          );
-        }).toList(),
-      ),
+                  ],
+                );
+              }).toList(),
+            ),
     );
   }
 }

@@ -7,6 +7,7 @@ import "package:flutter/rendering.dart";
 import "../models.dart";
 import "../app_state.dart";
 import "../services/pdf_service.dart";
+import "../services/signer_info_service.dart";
 import "pdf_viewer_page.dart";
 
 const _cBg      = Color(0xFF0B0E17);
@@ -29,6 +30,30 @@ class _SignaturePageState extends State<SignaturePage> {
   final List<Offset?> _points = [];
   final GlobalKey _canvasKey = GlobalKey();
   bool _saving = false;
+  late final TextEditingController _nameCtrl =
+      TextEditingController(text: widget.quote?.clientName ?? widget.invoice?.clientName ?? "");
+  final _phoneCtrl = TextEditingController();
+  final _emailCtrl = TextEditingController();
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _phoneCtrl.dispose();
+    _emailCtrl.dispose();
+    super.dispose();
+  }
+
+  InputDecoration _dec(String label, IconData icon) => InputDecoration(
+        labelText: label,
+        labelStyle: const TextStyle(color: Colors.white54, fontSize: 13),
+        prefixIcon: Icon(icon, color: _cGold, size: 18),
+        isDense: true,
+        filled: true,
+        fillColor: const Color(0xFF161B26),
+        border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: const BorderSide(color: _cBorder)),
+      );
 
   String get _docTitle => widget.quote != null
       ? "Quotation ${widget.quote!.id}"
@@ -114,7 +139,36 @@ class _SignaturePageState extends State<SignaturePage> {
                 ],
               ),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 16),
+            Wrap(spacing: 12, runSpacing: 12, children: [
+              SizedBox(
+                width: 260,
+                child: TextField(
+                  controller: _nameCtrl,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: _dec("Signer full name *", Icons.person_outline),
+                ),
+              ),
+              SizedBox(
+                width: 200,
+                child: TextField(
+                  controller: _phoneCtrl,
+                  keyboardType: TextInputType.phone,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: _dec("Phone number *", Icons.phone_outlined),
+                ),
+              ),
+              SizedBox(
+                width: 240,
+                child: TextField(
+                  controller: _emailCtrl,
+                  keyboardType: TextInputType.emailAddress,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: _dec("Email (optional)", Icons.alternate_email),
+                ),
+              ),
+            ]),
+            const SizedBox(height: 16),
             Expanded(
               child: RepaintBoundary(
                 key: _canvasKey,
@@ -173,7 +227,7 @@ class _SignaturePageState extends State<SignaturePage> {
                 Icon(Icons.lock_outline, color: Colors.white38, size: 16),
                 SizedBox(width: 6),
                 Text(
-                  "This signature will be embedded into the final signed PDF.",
+                  "Signature, signer details, device info and a document fingerprint are embedded in the signed PDF.",
                   style: TextStyle(color: Colors.white38, fontSize: 11),
                 ),
               ],
@@ -185,6 +239,12 @@ class _SignaturePageState extends State<SignaturePage> {
   }
 
   Future<void> _confirmSignature() async {
+    final name = _nameCtrl.text.trim();
+    final phone = _phoneCtrl.text.trim();
+    if (name.isEmpty || !RegExp(r"^\+?[0-9 ()-]{7,}$").hasMatch(phone)) {
+      _showError("Enter the signer's full name and a valid phone number");
+      return;
+    }
     setState(() => _saving = true);
     try {
       final boundary = _canvasKey.currentContext?.findRenderObject()
@@ -203,14 +263,24 @@ class _SignaturePageState extends State<SignaturePage> {
       final pngBytes = byteData.buffer.asUint8List();
       final base64Sig = base64Encode(pngBytes);
 
+      final docJson = widget.quote?.toJson() ?? widget.invoice!.toJson();
+      final signer = await SignerInfoService.collect(
+        name: name,
+        phone: phone,
+        email: _emailCtrl.text.trim(),
+        docHash: SignerInfoService.hashDocument(docJson),
+      );
+
       if (!mounted) return;
       final appState = AppStateProvider.of(context);
 
       if (widget.quote != null) {
         final q = widget.quote!;
-        appState.markQuoteSigned(q.id, base64Sig);
+        final now = DateTime.now();
+        appState.markQuoteSigned(q.id, base64Sig, now, signer);
         q.signatureData = base64Sig;
-        q.signedAt = DateTime.now();
+        q.signedAt = now;
+        q.signerInfo = signer;
         if (!mounted) return;
         await PdfViewerPage.openDocumentPdf(
           context: context,
@@ -220,9 +290,11 @@ class _SignaturePageState extends State<SignaturePage> {
         );
       } else if (widget.invoice != null) {
         final inv = widget.invoice!;
-        appState.markInvoiceSigned(inv.id, base64Sig);
+        final now = DateTime.now();
+        appState.markInvoiceSigned(inv.id, base64Sig, now, signer);
         inv.signatureData = base64Sig;
-        inv.signedAt = DateTime.now();
+        inv.signedAt = now;
+        inv.signerInfo = signer;
         if (!mounted) return;
         await PdfViewerPage.openDocumentPdf(
           context: context,

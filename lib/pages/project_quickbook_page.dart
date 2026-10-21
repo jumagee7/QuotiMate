@@ -6,8 +6,10 @@ import 'package:intl/intl.dart';
 import '../app_state.dart';
 import '../models.dart';
 import '../services/pdf_service.dart';
+import '../services/project_pdf_service.dart';
 import 'quote_editor_page.dart';
 import 'pdf_viewer_page.dart';
+import '../widgets/project_extras.dart';
 
 const _bg      = Color(0xFF0B0E17);
 const _sidebar = Color(0xFF0F162C);
@@ -58,9 +60,9 @@ class _ProjectQuickBookPageState extends State<ProjectQuickBookPage>
   void initState() {
     super.initState();
     _tabController = TabController(
-      length: 6,
+      length: 8,
       vsync: this,
-      initialIndex: widget.initialTab.clamp(0, 5),
+      initialIndex: widget.initialTab.clamp(0, 7),
     );
   }
 
@@ -183,6 +185,16 @@ class _ProjectQuickBookPageState extends State<ProjectQuickBookPage>
                   ],
                 ),
               ),
+              const PopupMenuItem(
+                value: 'project_pdf',
+                child: Row(
+                  children: [
+                    Icon(Icons.picture_as_pdf_outlined, color: _purple, size: 18),
+                    SizedBox(width: 10),
+                    Text('Project Report PDF', style: TextStyle(color: Colors.white, fontSize: 13)),
+                  ],
+                ),
+              ),
               const PopupMenuDivider(height: 1),
               const PopupMenuItem(
                 value: 'delete',
@@ -202,6 +214,8 @@ class _ProjectQuickBookPageState extends State<ProjectQuickBookPage>
                 _showAddExpenseDialog(context, appState, project);
               } else if (val == 'new_quote') {
                 _createNewQuoteForProject(context, appState, project);
+              } else if (val == 'project_pdf') {
+                _openProjectReportPdf(context, appState, project, linkedQuotes, linkedInvoices);
               } else if (val == 'delete') {
                 _confirmDeleteProject(context, appState, project);
               }
@@ -237,6 +251,14 @@ class _ProjectQuickBookPageState extends State<ProjectQuickBookPage>
               text: 'Bought Products (${project.expenses.length})',
             ),
             const Tab(icon: Icon(Icons.description_outlined, size: 18), text: 'Statement'),
+            Tab(
+              icon: const Icon(Icons.task_alt_rounded, size: 18),
+              text: 'Tasks (${appState.tasksForProject(project.id).length})',
+            ),
+            Tab(
+              icon: const Icon(Icons.photo_library_outlined, size: 18),
+              text: 'Notes & Photos (${project.notes.length})',
+            ),
           ],
         ),
       ),
@@ -270,6 +292,10 @@ class _ProjectQuickBookPageState extends State<ProjectQuickBookPage>
           _buildExpensesTab(context, appState, project),
           // 6. Statement & Export Tab
           _buildStatementTab(context, appState, project, linkedQuotes, linkedInvoices),
+          // 7. Project Tasks
+          ProjectTasksTab(appState: appState, project: project),
+          // 8. Notes & Photos
+          ProjectNotesTab(appState: appState, project: project),
         ],
       ),
     );
@@ -2306,10 +2332,18 @@ class _ProjectQuickBookPageState extends State<ProjectQuickBookPage>
     );
   }
 
-  void _createNewQuoteForProject(BuildContext context, AppState appState, Project project) {
-    final nextNumber = appState.nextQuoteNumber;
+  Future<void> _createNewQuoteForProject(BuildContext context, AppState appState, Project project) async {
+    final quoteId = await appState.reserveQuoteId();
+    if (!context.mounted) return;
+    if (quoteId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('You must be online and signed in to generate a quote number.'),
+        backgroundColor: _red,
+      ));
+      return;
+    }
     final newQuote = Quote(
-      id: 'Q-$nextNumber',
+      id: quoteId,
       clientId: project.clientId,
       clientName: project.clientName,
       projectId: project.id,
@@ -2326,9 +2360,24 @@ class _ProjectQuickBookPageState extends State<ProjectQuickBookPage>
 
     appState.addQuote(newQuote);
     appState.linkQuoteToProject(project.id, newQuote.id);
-    appState.updateSettings(nextQuoteNumber: nextNumber + 1);
 
     openQuoteEditorPage(context, appState, quote: newQuote);
+  }
+
+  void _openProjectReportPdf(
+    BuildContext context,
+    AppState appState,
+    Project project,
+    List<Quote> quotes,
+    List<Invoice> invoices,
+  ) {
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => PdfViewerPage(
+        title: 'Project Report — ${project.name}',
+        filename: 'Project_${project.name.replaceAll(RegExp(r'[^A-Za-z0-9]+'), '_')}.pdf',
+        buildPdf: (_) => ProjectPdfService.generate(project, appState, quotes: quotes, invoices: invoices),
+      ),
+    ));
   }
 
   void _showLinkQuoteDialog(BuildContext context, AppState appState, Project project) {

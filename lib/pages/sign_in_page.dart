@@ -236,7 +236,7 @@ class _SignInPageState extends State<SignInPage> with SingleTickerProviderStateM
                       children: [
                         // Logo
                         Image.asset(
-                          'assets/logo2.png',
+                          'assets/modernedge_logo.png',
                           width: 170,
                           filterQuality: FilterQuality.high,
                         ),
@@ -382,7 +382,7 @@ class _SignInPageState extends State<SignInPage> with SingleTickerProviderStateM
           // Logo & Title
           Center(
             child: Image.asset(
-              'assets/logo2.png',
+              'assets/modernedge_logo.png',
               width: 180,
               filterQuality: FilterQuality.high,
             ),
