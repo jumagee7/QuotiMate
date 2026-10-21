@@ -88,6 +88,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> _init() async {
     await _load();
+    NotificationService().rescheduleAll(tasks: _tasks, events: _events);
 
     // Load products from itemlist.json if products list is empty (migration)
     if (_products.isEmpty) {

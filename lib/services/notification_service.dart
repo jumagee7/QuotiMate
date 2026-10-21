@@ -1,224 +1,273 @@
-// notification_service.dart — Handles local push notifications for events/tasks
+// notification_service.dart — Local notifications for alarms, schedules and tasks
+//
+// Android: two channels (reminders / alarms). Alarms use AlarmClock scheduling
+// (exempt from Doze, shown in the status bar), full-screen intent, insistent
+// sound and Snooze / Dismiss actions. Reminders use exact-while-idle with an
+// inexact fallback when the "Alarms & reminders" permission is denied.
+// All pending reminders are re-registered on app start via [rescheduleAll].
+
+import 'dart:io' show Platform;
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:timezone/data/latest_all.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
-import 'dart:io' show Platform;
+
+import '../models.dart';
 
 class NotificationService {
   static final NotificationService _instance = NotificationService._();
   factory NotificationService() => _instance;
   NotificationService._();
 
-  final FlutterLocalNotificationsPlugin _localNotifications = FlutterLocalNotificationsPlugin();
+  static const _remindersChannelId = 'quotimate_reminders_v3';
+  static const _remindersChannelName = 'QuotiMate Reminders';
+  static const _remindersChannelDesc = 'Scheduled events, task due dates and updates';
+  static const _alarmsChannelId = 'quotimate_alarms_v3';
+  static const _alarmsChannelName = 'QuotiMate Alarms';
+  static const _alarmsChannelDesc = 'Alarm alerts for events and tasks marked with an alarm';
+  static const _snoozeActionId = 'snooze_10';
+  static const _dismissActionId = 'dismiss';
+  static const _snoozeMinutes = 10;
+
+  final FlutterLocalNotificationsPlugin _plugin = FlutterLocalNotificationsPlugin();
 
   bool _initialized = false;
   bool _isSupported = true;
-  bool _permissionsGranted = false;
+  bool _exactAllowed = true;
+  Future<void>? _initFuture;
 
-  Future<void> init() async {
-    if (_initialized) return;
+  bool get isSupported => _isSupported;
 
-    if (kIsWeb || Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+  Future<void> init() => _initFuture ??= _init();
+
+  Future<void> _init() async {
+    if (kIsWeb || !(Platform.isAndroid || Platform.isIOS)) {
       _isSupported = false;
       _initialized = true;
-      debugPrint('Local notifications not supported on desktop/web natively without extra config. Skipping.');
       return;
     }
-
     try {
       tz.initializeTimeZones();
-      
       try {
-        final tzInfo = await FlutterTimezone.getLocalTimezone();
-        tz.setLocalLocation(tz.getLocation(tzInfo.identifier));
-        debugPrint('Timezone set to: ${tzInfo.identifier}');
+        final info = await FlutterTimezone.getLocalTimezone();
+        tz.setLocalLocation(tz.getLocation(info.identifier));
       } catch (e) {
-        debugPrint('Could not set local timezone: $e');
-        tz.setLocalLocation(tz.UTC); // Fallback
+        debugPrint('Could not resolve local timezone, using UTC: $e');
+        tz.setLocalLocation(tz.UTC);
       }
 
-      const AndroidInitializationSettings initializationSettingsAndroid =
-          AndroidInitializationSettings('@mipmap/ic_launcher');
-
-      const InitializationSettings initializationSettings = InitializationSettings(
-        android: initializationSettingsAndroid,
+      const settings = InitializationSettings(
+        android: AndroidInitializationSettings('ic_notification'),
+        iOS: DarwinInitializationSettings(
+          requestAlertPermission: false,
+          requestBadgePermission: false,
+          requestSoundPermission: false,
+        ),
       );
-
-      await _localNotifications.initialize(
-        settings: initializationSettings,
-        onDidReceiveNotificationResponse: (details) {
-          debugPrint('Notification tapped: ${details.payload}');
-          // Handle notification tap if needed
-        },
+      await _plugin.initialize(
+        settings: settings,
+        onDidReceiveNotificationResponse: _onResponse,
       );
-
-      // Create notification channel for Android 8.0+
-      await _createNotificationChannel();
-
+      await _createChannels();
       _initialized = true;
-      debugPrint('NotificationService initialized successfully');
     } catch (e) {
       debugPrint('NotificationService init failed: $e');
-      _initialized = false;
+      _initFuture = null;
     }
   }
 
-  Future<void> _createNotificationChannel() async {
-    if (!Platform.isAndroid) return;
-    
-    final androidImplementation =
-        _localNotifications.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
-    
-    if (androidImplementation != null) {
-      // NOTE: Android freezes channel settings (importance, sound) once created.
-      // These _v2 IDs guarantee fresh settings on devices where earlier builds
-      // created the old channels with lower importance / no alarm sound.
-      const AndroidNotificationChannel channel = AndroidNotificationChannel(
-        'quotimate_reminders_v2',
-        'QuotiMate Reminders',
-        description: 'Notifications for scheduled events and tasks',
-        importance: Importance.max,
-        enableVibration: true,
-        enableLights: true,
-        playSound: true,
-      );
+  AndroidFlutterLocalNotificationsPlugin? get _android =>
+      _plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
 
-      await androidImplementation.createNotificationChannel(channel);
-      debugPrint('Notification channel created: quotimate_reminders_v2');
-
-      const AndroidNotificationChannel alarmChannel = AndroidNotificationChannel(
-        'quotimate_alarms_v2',
-        'QuotiMate Alarms',
-        description: 'Alarm alerts for events and tasks marked with an alarm',
-        importance: Importance.max,
-        enableVibration: true,
-        enableLights: true,
-        playSound: true,
-        audioAttributesUsage: AudioAttributesUsage.alarm,
-      );
-
-      await androidImplementation.createNotificationChannel(alarmChannel);
-      debugPrint('Notification channel created: quotimate_alarms_v2');
-
-      // Clean up channels created by earlier builds so they don't linger.
-      await androidImplementation.deleteNotificationChannel(channelId: 'quotimate_reminders');
-      await androidImplementation.deleteNotificationChannel(channelId: 'quotimate_alarms');
+  Future<void> _createChannels() async {
+    final android = _android;
+    if (android == null) return;
+    await android.createNotificationChannel(const AndroidNotificationChannel(
+      _remindersChannelId, _remindersChannelName,
+      description: _remindersChannelDesc,
+      importance: Importance.high,
+      enableVibration: true,
+      playSound: true,
+    ));
+    await android.createNotificationChannel(const AndroidNotificationChannel(
+      _alarmsChannelId, _alarmsChannelName,
+      description: _alarmsChannelDesc,
+      importance: Importance.max,
+      enableVibration: true,
+      enableLights: true,
+      playSound: true,
+      audioAttributesUsage: AudioAttributesUsage.alarm,
+    ));
+    for (final old in ['quotimate_reminders', 'quotimate_alarms', 'quotimate_reminders_v2', 'quotimate_alarms_v2']) {
+      await android.deleteNotificationChannel(channelId: old);
     }
   }
 
   Future<void> requestPermissions() async {
-    if (!_initialized) await init();
-    if (!_isSupported) return;
-
+    await init();
+    if (!_isSupported || !_initialized) return;
     try {
-      final androidImplementation =
-          _localNotifications.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
-      if (androidImplementation != null) {
-        // Only show the runtime dialog if notifications are currently disabled.
-        final alreadyEnabled = await androidImplementation.areNotificationsEnabled() == true;
-        final granted = alreadyEnabled
-            ? true
-            : await androidImplementation.requestNotificationsPermission();
-
-        // Exact alarms: only open the system "Alarms & reminders" screen when
-        // the special permission is actually missing, otherwise skip.
-        bool exactOk = false;
+      final android = _android;
+      if (android != null) {
+        if (await android.areNotificationsEnabled() != true) {
+          await android.requestNotificationsPermission();
+        }
         try {
-          exactOk = await androidImplementation.canScheduleExactNotifications() == true;
+          _exactAllowed = await android.canScheduleExactNotifications() == true;
+          if (!_exactAllowed) {
+            await android.requestExactAlarmsPermission();
+            _exactAllowed = await android.canScheduleExactNotifications() == true;
+          }
         } catch (_) {
-          exactOk = true; // Pre-Android 12: always allowed
+          _exactAllowed = true; // Pre-Android 12
         }
-        if (!exactOk) {
-          await androidImplementation.requestExactAlarmsPermission();
-          try {
-            exactOk = await androidImplementation.canScheduleExactNotifications() == true;
-          } catch (_) {}
-        }
-
-        _permissionsGranted = granted == true;
-
-        debugPrint('Notification permission granted: $granted');
-        debugPrint('Exact alarm permission granted: $exactOk');
-        debugPrint('Permissions fully granted: $_permissionsGranted');
-
-        if (!_permissionsGranted) {
-          debugPrint('WARNING: Notifications may not work without proper permissions');
-        }
+        try {
+          await android.requestFullScreenIntentPermission();
+        } catch (_) {}
       }
+      final ios = _plugin.resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>();
+      await ios?.requestPermissions(alert: true, badge: true, sound: true);
     } catch (e) {
-      debugPrint('Failed to request notification permissions: $e');
+      debugPrint('Notification permission request failed: $e');
     }
   }
 
-  Future<void> showTestNotification() async {
-    if (!_initialized) await init();
-    if (!_isSupported) return;
-    
-    try {
-      const AndroidNotificationDetails androidPlatformChannelSpecifics = AndroidNotificationDetails(
-        'quotimate_reminders_v2',
-        'QuotiMate Reminders',
-        channelDescription: 'Notifications for scheduled events and tasks',
-        importance: Importance.max,
-        priority: Priority.max,
-        icon: 'ic_notification',
-      );
-      const NotificationDetails platformChannelSpecifics = NotificationDetails(
-        android: androidPlatformChannelSpecifics,
-      );
+  // ── Details ────────────────────────────────────────────────────────────────
 
-      await _localNotifications.show(
-        id: 0,
-        title: 'Test Notification',
-        body: 'This is a test notification from QuotiMate',
-        notificationDetails: platformChannelSpecifics,
-      );
-      debugPrint('Test notification shown');
-    } catch (e) {
-      debugPrint('Failed to show test notification: $e');
-    }
+  NotificationDetails _details({required bool alarm}) {
+    final android = alarm
+        ? AndroidNotificationDetails(
+            _alarmsChannelId, _alarmsChannelName,
+            channelDescription: _alarmsChannelDesc,
+            importance: Importance.max,
+            priority: Priority.max,
+            icon: 'ic_notification',
+            category: AndroidNotificationCategory.alarm,
+            fullScreenIntent: true,
+            ongoing: true,
+            autoCancel: false,
+            playSound: true,
+            enableVibration: true,
+            vibrationPattern: Int64List.fromList([0, 800, 400, 800, 400, 800]),
+            audioAttributesUsage: AudioAttributesUsage.alarm,
+            visibility: NotificationVisibility.public,
+            additionalFlags: Int32List.fromList([4]), // FLAG_INSISTENT: repeat sound until handled
+            actions: const [
+              AndroidNotificationAction(_snoozeActionId, 'Snooze $_snoozeMinutes min',
+                  showsUserInterface: true, cancelNotification: true),
+              AndroidNotificationAction(_dismissActionId, 'Dismiss', cancelNotification: true),
+            ],
+          )
+        : const AndroidNotificationDetails(
+            _remindersChannelId, _remindersChannelName,
+            channelDescription: _remindersChannelDesc,
+            importance: Importance.high,
+            priority: Priority.high,
+            icon: 'ic_notification',
+            category: AndroidNotificationCategory.reminder,
+            visibility: NotificationVisibility.public,
+          );
+    return NotificationDetails(
+      android: android,
+      iOS: DarwinNotificationDetails(
+        presentAlert: true,
+        presentSound: true,
+        interruptionLevel: alarm ? InterruptionLevel.timeSensitive : InterruptionLevel.active,
+      ),
+    );
   }
+
+  /// Stable 31-bit id (FNV-1a) so the same reminder keeps the same id across restarts.
+  static int notificationId(String key) {
+    var hash = 0x811c9dc5;
+    for (final c in key.codeUnits) {
+      hash ^= c;
+      hash = (hash * 0x01000193) & 0xffffffff;
+    }
+    return hash & 0x7fffffff;
+  }
+
+  // ── Immediate ──────────────────────────────────────────────────────────────
 
   Future<void> showInstantNotification({
     required int id,
     required String title,
     required String body,
+    bool alarm = false,
+    String? payload,
   }) async {
-    if (!_initialized) await init();
-    if (!_isSupported) return;
-
+    await init();
+    if (!_isSupported || !_initialized) return;
     try {
-      const AndroidNotificationDetails androidPlatformChannelSpecifics = AndroidNotificationDetails(
-        'quotimate_reminders_v2',
-        'QuotiMate Reminders',
-        channelDescription: 'Notifications for scheduled events and tasks',
-        importance: Importance.max,
-        priority: Priority.max,
-        icon: 'ic_notification',
-      );
-      const NotificationDetails platformChannelSpecifics = NotificationDetails(
-        android: androidPlatformChannelSpecifics,
-      );
-
-      await _localNotifications.show(
-        id: id,
+      await _plugin.show(
+        id: id & 0x7fffffff,
         title: title,
         body: body,
-        notificationDetails: platformChannelSpecifics,
+        notificationDetails: _details(alarm: alarm),
+        payload: payload,
       );
     } catch (e) {
-      debugPrint('Failed to show instant notification: $e');
+      debugPrint('Failed to show notification: $e');
     }
   }
 
-  int _generateId(String stringId, {String suffix = ''}) {
-    // Generate a unique integer ID from a string ID (like 'e1' or 't2')
-    return '${stringId}$suffix'.hashCode;
+  Future<void> showTestNotification() async {
+    await showInstantNotification(
+      id: notificationId('test'),
+      title: 'QuotiMate notifications are working',
+      body: 'Reminders and alarms will appear like this.',
+    );
+    await _schedule(
+      key: 'test_alarm',
+      title: 'QuotiMate test alarm',
+      body: 'This alarm was scheduled 10 seconds ago.',
+      when: DateTime.now().add(const Duration(seconds: 10)),
+      alarm: true,
+    );
   }
 
+  // ── Scheduling ─────────────────────────────────────────────────────────────
+
+  Future<void> _schedule({
+    required String key,
+    required String title,
+    required String body,
+    required DateTime when,
+    bool alarm = false,
+  }) async {
+    await init();
+    if (!_isSupported || !_initialized) return;
+    if (!when.isAfter(DateTime.now())) return;
+
+    final id = notificationId(key);
+    final date = tz.TZDateTime.from(when, tz.local);
+    final modes = <AndroidScheduleMode>[
+      if (alarm) AndroidScheduleMode.alarmClock,
+      if (_exactAllowed) AndroidScheduleMode.exactAllowWhileIdle,
+      AndroidScheduleMode.inexactAllowWhileIdle,
+    ];
+    for (final mode in modes) {
+      try {
+        await _plugin.zonedSchedule(
+          id: id,
+          title: title,
+          body: body,
+          scheduledDate: date,
+          notificationDetails: _details(alarm: alarm),
+          androidScheduleMode: mode,
+          payload: '$key|$title|$body|${alarm ? 1 : 0}',
+        );
+        return;
+      } catch (e) {
+        debugPrint('Scheduling $key with $mode failed: $e');
+      }
+    }
+  }
+
+  /// Task / generic reminder: 1 hour before (when there's time) and at the due time.
   Future<void> scheduleEventReminder({
     required String id,
     required String title,
@@ -226,17 +275,19 @@ class NotificationService {
     required DateTime scheduledTime,
     bool alarm = false,
   }) async {
-    // Schedule notification at exact time (when session starts)
-    await _scheduleSingleReminder(
-      id: id,
-      suffix: '_start',
-      title: title,
-      body: body,
-      scheduledTime: scheduledTime,
-      alarm: alarm,
-    );
+    final before = scheduledTime.subtract(const Duration(hours: 1));
+    if (before.isAfter(DateTime.now())) {
+      await _schedule(
+        key: '${id}_before',
+        title: title,
+        body: 'Due in 1 hour${body.isNotEmpty ? ' — $body' : ''}',
+        when: before,
+      );
+    }
+    await _schedule(key: '${id}_start', title: title, body: body, when: scheduledTime, alarm: alarm);
   }
 
+  /// Calendar event: morning-of summary, N minutes before, and at start.
   Future<void> scheduleEventReminders({
     required String id,
     required String title,
@@ -245,135 +296,80 @@ class NotificationService {
     int minutesBefore = 15,
     bool alarm = false,
   }) async {
-    if (!_initialized) await init();
-    if (!_isSupported) return;
-
-    // 1. Notification when the day has come (at midnight on the day of the event)
-    final dayStart = DateTime(startTime.year, startTime.month, startTime.day, 0, 0);
-    if (dayStart.isAfter(DateTime.now())) {
-      await _scheduleSingleReminder(
-        id: id,
-        suffix: '_day',
-        title: 'Upcoming Event Today',
-        body: '$title is scheduled for today at ${_formatTime(startTime)}',
-        scheduledTime: dayStart,
-        alarm: alarm,
+    await cancelReminder(id);
+    final morning = DateTime(startTime.year, startTime.month, startTime.day, 7);
+    if (morning.isBefore(startTime.subtract(Duration(minutes: minutesBefore)))) {
+      await _schedule(
+        key: '${id}_day',
+        title: 'Today: $title',
+        body: 'Scheduled at ${_formatTime(startTime)}${description.isNotEmpty ? ' — $description' : ''}',
+        when: morning,
       );
     }
-
-    // 2. Notification when the event is about to start (X minutes before)
-    final beforeStart = startTime.subtract(Duration(minutes: minutesBefore));
-    if (beforeStart.isAfter(DateTime.now())) {
-      await _scheduleSingleReminder(
-        id: id,
-        suffix: '_before',
-        title: 'Event Starting Soon',
-        body: '$title starts in $minutesBefore minutes',
-        scheduledTime: beforeStart,
-        alarm: alarm,
-      );
-    }
-
-    // 3. Notification when the event starts
-    await _scheduleSingleReminder(
-      id: id,
-      suffix: '_start',
-      title: 'Event Starting Now',
-      body: '$title is starting now',
-      scheduledTime: startTime,
+    await _schedule(
+      key: '${id}_before',
+      title: 'Starting soon: $title',
+      body: 'Starts in $minutesBefore minutes (${_formatTime(startTime)})',
+      when: startTime.subtract(Duration(minutes: minutesBefore)),
+    );
+    await _schedule(
+      key: '${id}_start',
+      title: title,
+      body: description.isNotEmpty ? description : 'Starting now',
+      when: startTime,
       alarm: alarm,
     );
   }
 
-  Future<void> _scheduleSingleReminder({
-    required String id,
-    required String suffix,
-    required String title,
-    required String body,
-    required DateTime scheduledTime,
-    bool alarm = false,
-  }) async {
-    if (!_initialized) await init();
-    if (!_isSupported) return;
-
-    if (scheduledTime.isBefore(DateTime.now())) {
-      debugPrint('Skipping notification for $id - scheduled time is in the past');
-      return; // Do not schedule in the past
-    }
-
-    final tzDateTime = tz.TZDateTime.from(scheduledTime, tz.local);
-    debugPrint('Scheduling notification for $id at $scheduledTime (local: $tzDateTime, alarm: $alarm)');
-
-    final AndroidNotificationDetails androidPlatformChannelSpecifics = AndroidNotificationDetails(
-      alarm ? 'quotimate_alarms_v2' : 'quotimate_reminders_v2',
-      alarm ? 'QuotiMate Alarms' : 'QuotiMate Reminders',
-      channelDescription: alarm
-          ? 'Alarm alerts for events and tasks marked with an alarm'
-          : 'Notifications for scheduled events and tasks',
-      importance: Importance.max,
-      priority: Priority.max,
-      icon: 'ic_notification',
-      enableVibration: true,
-      enableLights: true,
-      playSound: true,
-      category: alarm ? AndroidNotificationCategory.alarm : AndroidNotificationCategory.reminder,
-      fullScreenIntent: alarm,
-      audioAttributesUsage: alarm ? AudioAttributesUsage.alarm : AudioAttributesUsage.notification,
-    );
-    final NotificationDetails platformChannelSpecifics = NotificationDetails(
-      android: androidPlatformChannelSpecifics,
-    );
-
-    final int notificationId = _generateId(id, suffix: suffix);
-
-    try {
-      await _localNotifications.zonedSchedule(
-        id: notificationId,
-        title: title,
-        body: body,
-        scheduledDate: tzDateTime,
-        notificationDetails: platformChannelSpecifics,
-        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-        matchDateTimeComponents: null, // one-off alarm
+  /// Re-registers every future reminder (call after loading data on app start,
+  /// e.g. after an update or when permissions were granted later).
+  Future<void> rescheduleAll({required List<AppTask> tasks, required List<AppEvent> events}) async {
+    await init();
+    if (!_isSupported || !_initialized) return;
+    final now = DateTime.now();
+    for (final t in tasks) {
+      if (t.status == TaskStatus.done || t.dueDate.isBefore(now)) continue;
+      await scheduleEventReminder(
+        id: t.id, title: 'Task Due: ${t.title}', body: t.description,
+        scheduledTime: t.dueDate, alarm: t.alarmEnabled,
       );
-      debugPrint('Successfully scheduled notification for $id (suffix: $suffix)');
-    } catch (e) {
-      // Exact alarms can fail when the "Alarms & reminders" special permission
-      // is denied. Fall back to inexact so the reminder still fires.
-      debugPrint('Exact scheduling failed for $id, falling back to inexact: $e');
-      try {
-        await _localNotifications.zonedSchedule(
-          id: notificationId,
-          title: title,
-          body: body,
-          scheduledDate: tzDateTime,
-          notificationDetails: platformChannelSpecifics,
-          androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
-          matchDateTimeComponents: null,
-        );
-        debugPrint('Scheduled inexact notification for $id (suffix: $suffix)');
-      } catch (e2) {
-        debugPrint('Failed to schedule notification for $id: $e2');
-      }
+    }
+    for (final e in events) {
+      if (e.startTime.isBefore(now)) continue;
+      await scheduleEventReminders(
+        id: e.id, title: e.title, description: e.description,
+        startTime: e.startTime, alarm: e.alarmEnabled,
+      );
     }
   }
 
-  String _formatTime(DateTime dt) {
-    return '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+  // ── Actions ────────────────────────────────────────────────────────────────
+
+  void _onResponse(NotificationResponse response) {
+    final parts = (response.payload ?? '').split('|');
+    if (response.actionId == _snoozeActionId && parts.length >= 4) {
+      _schedule(
+        key: '${parts[0]}_snooze',
+        title: parts[1],
+        body: parts[2],
+        when: DateTime.now().add(const Duration(minutes: _snoozeMinutes)),
+        alarm: parts[3] == '1',
+      );
+    }
   }
+
+  String _formatTime(DateTime dt) =>
+      '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
 
   Future<void> cancelReminder(String id) async {
-    if (!_initialized) return;
-    if (!_isSupported) return;
-    // Cancel all reminders for this ID (day, before, start)
-    await _localNotifications.cancel(id: _generateId(id, suffix: '_day'));
-    await _localNotifications.cancel(id: _generateId(id, suffix: '_before'));
-    await _localNotifications.cancel(id: _generateId(id, suffix: '_start'));
+    if (!_isSupported || !_initialized) return;
+    for (final suffix in ['_day', '_before', '_start', '_snooze']) {
+      await _plugin.cancel(id: notificationId('$id$suffix'));
+    }
   }
 
   Future<void> cancelAllReminders() async {
-    if (!_initialized) return;
-    if (!_isSupported) return;
-    await _localNotifications.cancelAll();
+    if (!_isSupported || !_initialized) return;
+    await _plugin.cancelAll();
   }
 }
