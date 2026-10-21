@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:intl/intl.dart';
 import 'dart:typed_data';
 // pages/settings_page.dart â€” QuotiMate Settings & Preferences
@@ -1060,6 +1061,10 @@ class _SettingsPageState extends State<SettingsPage> {
         allowedExtensions: const ['json'],
         bytes: bytes,
       );
+      if (kIsWeb) {
+        messenger.showSnackBar(SnackBar(content: Text('Downloading $name'), backgroundColor: const Color(0xFF161B26)));
+        return;
+      }
       if (path == null) return;
       final file = File(path);
       if (!await file.exists() || await file.length() == 0) await file.writeAsBytes(bytes);
