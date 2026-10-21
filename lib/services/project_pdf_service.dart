@@ -94,7 +94,7 @@ class ProjectPdfService {
       pageFormat: PdfPageFormat.a4,
       margin: const pw.EdgeInsets.all(28),
       footer: (ctx) => pw.Row(mainAxisAlignment: pw.MainAxisAlignment.spaceBetween, children: [
-        pw.Text('Internal project report — not a client document',
+        pw.Text('Internal project report - not a client document',
             style: const pw.TextStyle(fontSize: 7, color: PdfColors.grey600)),
         pw.Text('Page ${ctx.pageNumber} of ${ctx.pagesCount}',
             style: const pw.TextStyle(fontSize: 7, color: PdfColors.grey600)),
@@ -141,7 +141,7 @@ class ProjectPdfService {
         _kv('Net profit', _money.format(project.netProfitRealized())),
         _kv('Outstanding', _money.format(project.outstandingBalance(state.invoices, state.quotes))),
         for (final q in quotes) ...[
-          _section('Quotation #${q.id} — ${q.status.name}'),
+          _section('Quotation #${q.id} - ${q.status.name}'),
           for (final cat in q.categories) ...[
             pw.Padding(
               padding: const pw.EdgeInsets.only(top: 4, bottom: 3),

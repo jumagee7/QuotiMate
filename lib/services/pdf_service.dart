@@ -1568,7 +1568,7 @@ class PdfService {
               children: [
                 pw.Text(
                   quote.signerInfo != null && quote.signerInfo!.name.isNotEmpty
-                      ? '${quote.signerInfo!.name} • ${quote.signerInfo!.phone}'
+                      ? '${quote.signerInfo!.name} | ${quote.signerInfo!.phone}'
                       : (quote.clientName.isEmpty ? 'Client Signature' : quote.clientName),
                   style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold),
                 ),
