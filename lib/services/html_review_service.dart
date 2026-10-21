@@ -31,6 +31,7 @@ class HtmlReviewService {
       companyPhone: state.companyPhone,
       notes: quote.notes,
       serverUrl: serverUrl,
+      shareToken: quote.shareToken ?? '',
     );
   }
 
@@ -54,6 +55,7 @@ class HtmlReviewService {
       companyPhone: state.companyPhone,
       notes: invoice.notes,
       serverUrl: serverUrl,
+      shareToken: invoice.shareToken ?? '',
     );
   }
 
@@ -124,6 +126,7 @@ class HtmlReviewService {
 
   static String _buildHtml({
     required String docType,
+    String shareToken = '',
     required String docId,
     required String clientName,
     required String date,
@@ -219,6 +222,12 @@ class HtmlReviewService {
     <div class="sig-section">
       <h2>✍️ Digital Acceptance & Signature</h2>
       <p>Please review the above $docType. If everything is satisfactory, sign inside the box below and click <strong>Approve & Sign Document</strong>.</p>
+      <div style="display:flex;flex-wrap:wrap;gap:10px;margin:10px 0;">
+        <input id="signer-name" placeholder="Your full name *" value="${_esc(clientName)}" style="flex:1;min-width:200px;padding:10px;border:1px solid #94a3b8;border-radius:8px;font-size:14px;">
+        <input id="signer-phone" type="tel" placeholder="Phone number *" style="flex:1;min-width:160px;padding:10px;border:1px solid #94a3b8;border-radius:8px;font-size:14px;">
+        <input id="signer-email" type="email" placeholder="Email (optional)" style="flex:1;min-width:180px;padding:10px;border:1px solid #94a3b8;border-radius:8px;font-size:14px;">
+      </div>
+      <p style="font-size:11px;color:#64748b;margin:0 0 8px;">For security, your name, phone number, device and browser details are recorded with your signature and printed on the signed PDF.</p>
       <canvas id="sig-canvas" width="520" height="160"></canvas>
       <div class="sig-actions">
         <button id="clear-btn" onclick="clearSig()">Clear Signature</button>
@@ -242,6 +251,22 @@ class HtmlReviewService {
 <script>
 const docId = "$docId";
 const docType = "$docType";
+const shareToken = "$shareToken";
+
+function collectSignerInfo() {
+  return {
+    name: document.getElementById("signer-name").value.trim(),
+    phone: document.getElementById("signer-phone").value.trim(),
+    email: document.getElementById("signer-email").value.trim(),
+    method: "Web link",
+    userAgent: navigator.userAgent,
+    platform: (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || "",
+    deviceModel: (navigator.userAgentData && navigator.userAgentData.mobile ? "Mobile" : "Desktop") + " " + screen.width + "x" + screen.height + " @" + (window.devicePixelRatio || 1) + "x",
+    osVersion: navigator.language || "",
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "",
+    capturedAt: new Date().toISOString()
+  };
+}
 const clientName = "$clientName";
 const companyName = "$companyName";
 const configuredServer = "$configuredServerUrl";
@@ -300,6 +325,11 @@ function clearSig() {
 
 async function approveSig() {
   if (!hasSig) return;
+  const signer = collectSignerInfo();
+  if (!signer.name || !/^\\+?[0-9 ()-]{7,}\$/.test(signer.phone)) {
+    alert("Please enter your full name and a valid phone number before signing.");
+    return;
+  }
   const approveBtn = document.getElementById("approve-btn");
   approveBtn.disabled = true;
   approveBtn.innerText = "Transmitting Signature...";
@@ -315,13 +345,14 @@ async function approveSig() {
   try {
     const colName = isQuote ? "quotimate_quotes" : "quotimate_invoices";
     const apiKey = "AIzaSyCpwFl0YHaE0NChko6YUeL7ZbC8AU1Nt7o";
-    const firestoreUrl = "https://firestore.googleapis.com/v1/projects/quotimate-cloud/databases/(default)/documents/" + colName + "/" + encodeURIComponent(docId) + "?updateMask.fieldPaths=signatureData&updateMask.fieldPaths=signedAt&updateMask.fieldPaths=status&key=" + apiKey;
+    const firestoreUrl = "https://firestore.googleapis.com/v1/projects/quotimate-cloud/databases/(default)/documents/" + colName + "/" + encodeURIComponent(docId) + "?updateMask.fieldPaths=signatureData&updateMask.fieldPaths=signedAt&updateMask.fieldPaths=status&updateMask.fieldPaths=signerInfo&key=" + apiKey;
 
     const payload = {
       fields: {
         signatureData: { stringValue: base64Data },
         signedAt: { stringValue: nowIso },
-        status: { stringValue: "approved" }
+        status: { stringValue: "approved" },
+        signerInfo: { mapValue: { fields: Object.fromEntries(Object.entries(signer).map(([k, v]) => [k, { stringValue: String(v) }])) } }
       }
     };
 
@@ -351,7 +382,9 @@ async function approveSig() {
           docId: docId,
           docType: docType,
           signatureData: base64Data,
-          signedAt: nowIso
+          signedAt: nowIso,
+          token: shareToken,
+          signerInfo: signer
         })
       });
       if (res.ok) {

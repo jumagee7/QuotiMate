@@ -77,7 +77,7 @@ class _QuoteEditorPageState extends State<QuoteEditorPage> {
         showSubtotals: c.showSubtotals,
         items: c.items.map((i) => QuoteItem(
           productId: i.productId, name: i.name, qty: i.qty,
-          unitPrice: i.unitPrice, unit: i.unit,
+          unitPrice: i.unitPrice, unit: i.unit, description: i.description,
         )).toList(),
       )).toList();
       // Pre-fill client name
@@ -892,6 +892,7 @@ class _QuoteEditorPageState extends State<QuoteEditorPage> {
         items: orig.items.map((i) => QuoteItem(
           productId: 'custom_${DateTime.now().millisecondsSinceEpoch}',
           name: i.name, qty: i.qty, unitPrice: i.unitPrice, unit: i.unit,
+          description: i.description,
         )).toList(),
       ));
     });
@@ -902,6 +903,7 @@ class _QuoteEditorPageState extends State<QuoteEditorPage> {
     final qtyCtrl   = TextEditingController(text: '1');
     final unitCtrl  = TextEditingController(text: 'Pcs');
     final priceCtrl = TextEditingController(text: '0');
+    final descCtrl  = TextEditingController();
 
     showDialog(
       context: context,
@@ -984,6 +986,10 @@ class _QuoteEditorPageState extends State<QuoteEditorPage> {
                 _labelWrap('UNIT PRICE (KES)',
                   TextField(controller: priceCtrl, style: const TextStyle(color: Colors.white),
                     decoration: _dec('0'), keyboardType: TextInputType.number)),
+                const SizedBox(height: 14),
+                _labelWrap('PROJECT NOTES (paint code, colour, finish — not shown on quote PDF)',
+                  TextField(controller: descCtrl, style: const TextStyle(color: Colors.white),
+                    maxLines: 2, decoration: _dec('e.g. Crown 0045 Ivory, satin finish'))),
               ],
             ),
           ),
@@ -1001,6 +1007,7 @@ class _QuoteEditorPageState extends State<QuoteEditorPage> {
                       qty: double.tryParse(qtyCtrl.text) ?? 1.0,
                       unitPrice: double.tryParse(priceCtrl.text) ?? 0.0,
                       unit: unitCtrl.text.trim().isEmpty ? 'Pcs' : unitCtrl.text.trim(),
+                      description: descCtrl.text.trim(),
                     ));
                   });
                   Navigator.pop(ctx);
@@ -1859,7 +1866,7 @@ class _QuoteEditorPageState extends State<QuoteEditorPage> {
     return matrix[len1][len2];
   }
 
-  void _save() {
+  Future<void> _save() async {
     final typedName = _clientNameCtrl.text.trim();
 
     if (typedName.isEmpty) {
@@ -1893,6 +1900,9 @@ class _QuoteEditorPageState extends State<QuoteEditorPage> {
       }
     }
 
+    await _offerToAddNewProducts();
+    if (!mounted) return;
+
     if (widget.quote != null) {
       final q = widget.quote!;
       q.clientId = client.id; q.clientName = client.name;
@@ -1901,10 +1911,17 @@ class _QuoteEditorPageState extends State<QuoteEditorPage> {
       q.vatPercent = widget.appState.defaultVatPercent;
       widget.appState.updateQuote(q);
     } else {
-      final num = widget.appState.nextQuoteNumber;
-      widget.appState.updateSettings(nextQuoteNumber: num + 1);
+      final quoteId = await widget.appState.reserveQuoteId();
+      if (!mounted) return;
+      if (quoteId == null) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('You must be online and signed in to generate a quote number. Connect and try again.'),
+          backgroundColor: Colors.red,
+        ));
+        return;
+      }
       widget.appState.addQuote(Quote(
-        id: 'Q-$num', clientId: client.id, clientName: client.name,
+        id: quoteId, clientId: client.id, clientName: client.name,
         date: DateTime.now(),
         expiryDate: DateTime.now().add(Duration(days: widget.appState.defaultExpiryDays)),
         status: _status, notes: _notes, labourInput: _labourInput, categories: _categories,
@@ -1916,6 +1933,69 @@ class _QuoteEditorPageState extends State<QuoteEditorPage> {
       content: Text(widget.quote != null ? 'Quote updated' : 'Quote saved'),
       backgroundColor: _surface,
     ));
+  }
+
+  /// Detects quote items that are not in the product catalogue and asks the
+  /// user whether to add them to the product list.
+  Future<void> _offerToAddNewProducts() async {
+    final newItems = widget.appState.findItemsNotInCatalogue(
+      _categories.expand((c) => c.items),
+    );
+    if (newItems.isEmpty) return;
+    final selected = {for (final i in newItems) i.name: true};
+    final add = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDlg) => AlertDialog(
+          backgroundColor: _surface,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Text('New products detected',
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          content: SizedBox(
+            width: 400,
+            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('${newItems.length} item(s) are not in your product list. Add them?',
+                  style: const TextStyle(color: Colors.white70)),
+              const SizedBox(height: 8),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 280),
+                child: ListView(shrinkWrap: true, children: [
+                  for (final i in newItems)
+                    CheckboxListTile(
+                      dense: true,
+                      activeColor: _gold,
+                      checkColor: Colors.black,
+                      value: selected[i.name],
+                      onChanged: (v) => setDlg(() => selected[i.name] = v ?? false),
+                      title: Text(i.name, style: const TextStyle(color: Colors.white)),
+                      subtitle: Text('${i.unit} • KES ${i.unitPrice.toStringAsFixed(2)}',
+                          style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                    ),
+                ]),
+              ),
+            ]),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Not now', style: TextStyle(color: Colors.white54))),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: _gold, foregroundColor: Colors.black),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Update product list'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (add != true) return;
+    final chosen = newItems.where((i) => selected[i.name] == true).toList();
+    widget.appState.addProductsFromItems(chosen);
+    if (mounted && chosen.isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Added ${chosen.length} product(s) to the catalogue'),
+        backgroundColor: Colors.green,
+      ));
+    }
   }
 
   /// Returns an existing client by name (case-insensitive) or creates and persists a new one.
@@ -1986,6 +2066,7 @@ class _ItemCardWidgetState extends State<_ItemCardWidget> {
   late final TextEditingController _nameCtrl;
   late final TextEditingController _qtyCtrl;
   late final TextEditingController _priceCtrl;
+  late final TextEditingController _descCtrl;
   final FocusNode _nameFocus = FocusNode();
 
   static const _border  = Color(0xFF2A3660);
@@ -2000,6 +2081,7 @@ class _ItemCardWidgetState extends State<_ItemCardWidget> {
     _nameCtrl  = TextEditingController(text: widget.item.name);
     _qtyCtrl   = TextEditingController(text: _compact(widget.item.qty));
     _priceCtrl = TextEditingController(text: _compact(widget.item.unitPrice));
+    _descCtrl  = TextEditingController(text: widget.item.description);
   }
 
   @override
@@ -2007,6 +2089,7 @@ class _ItemCardWidgetState extends State<_ItemCardWidget> {
     _nameCtrl.dispose();
     _qtyCtrl.dispose();
     _priceCtrl.dispose();
+    _descCtrl.dispose();
     _nameFocus.dispose();
     super.dispose();
   }
@@ -2109,6 +2192,17 @@ class _ItemCardWidgetState extends State<_ItemCardWidget> {
             ),
           ])),
         ]),
+        const SizedBox(height: 10),
+        const Text('PROJECT NOTES (paint code, colour — not on quote PDF)',
+            style: TextStyle(color: _white38, fontSize: 10, fontWeight: FontWeight.w600, letterSpacing: 0.8)),
+        const SizedBox(height: 6),
+        TextField(
+          controller: _descCtrl,
+          style: const TextStyle(color: Colors.white),
+          decoration: widget.dec('e.g. Crown 0045 Ivory, satin finish'),
+          maxLines: null,
+          onChanged: (v) { widget.item.description = v.trim(); widget.onChanged(); },
+        ),
       ]),
     );
   }

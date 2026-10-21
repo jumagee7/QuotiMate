@@ -164,6 +164,9 @@ class QuoteItem {
   double qty;
   double unitPrice;
   String unit;
+  /// Internal project-management details (paint code, colour, finish, ...).
+  /// Saved with the quote and shown in project PDFs, never in the quote PDF.
+  String description;
 
   QuoteItem({
     required this.productId,
@@ -171,6 +174,7 @@ class QuoteItem {
     required this.qty,
     required this.unitPrice,
     this.unit = 'pcs',
+    this.description = '',
   });
 
   double get total => qty * unitPrice;
@@ -181,11 +185,13 @@ class QuoteItem {
     qty: (j['qty'] as num?)?.toDouble() ?? 1.0,
     unitPrice: (j['unitPrice'] as num?)?.toDouble() ?? 0.0,
     unit: j['unit'] as String? ?? 'pcs',
+    description: j['description'] as String? ?? '',
   );
 
   Map<String, dynamic> toJson() => {
     'productId': productId, 'name': name,
     'qty': qty, 'unitPrice': unitPrice, 'unit': unit,
+    if (description.isNotEmpty) 'description': description,
   };
 }
 
@@ -264,6 +270,7 @@ class Quote {
   String? signatureData;  // base64 PNG
   DateTime? signedAt;
   String? shareToken;     // unique share UUID
+  SignerInfo? signerInfo; // signer identity + device evidence
 
   Quote({
     required this.id,
@@ -282,6 +289,7 @@ class Quote {
     this.signatureData,
     this.signedAt,
     this.shareToken,
+    this.signerInfo,
   });
 
   double get subtotal => categories.fold(0, (sum, cat) => sum + cat.subtotal);
@@ -332,6 +340,7 @@ class Quote {
     signatureData: j['signatureData'] as String?,
     signedAt: j['signedAt'] != null ? DateTime.tryParse(j['signedAt'] as String) : null,
     shareToken: j['shareToken'] as String?,
+    signerInfo: j['signerInfo'] is Map ? SignerInfo.fromJson(Map<String, dynamic>.from(j['signerInfo'] as Map)) : null,
     categories: (j['categories'] as List<dynamic>? ?? [])
         .map((e) => QuoteCategory.fromJson(e as Map<String, dynamic>))
         .toList(),
@@ -349,6 +358,7 @@ class Quote {
     if (signatureData != null) 'signatureData': signatureData,
     if (signedAt != null) 'signedAt': signedAt!.toIso8601String(),
     if (shareToken != null) 'shareToken': shareToken,
+    if (signerInfo != null) 'signerInfo': signerInfo!.toJson(),
     'categories': categories.map((c) => c.toJson()).toList(),
   };
 }
@@ -372,6 +382,7 @@ class Invoice {
   String? signatureData;  // base64 PNG
   DateTime? signedAt;
   String? shareToken;     // unique share UUID
+  SignerInfo? signerInfo; // signer identity + device evidence
 
   Invoice({
     required this.id,
@@ -391,6 +402,7 @@ class Invoice {
     this.signatureData,
     this.signedAt,
     this.shareToken,
+    this.signerInfo,
   });
 
   double get subtotal => categories.fold(0, (sum, cat) => sum + cat.subtotal);
@@ -444,6 +456,7 @@ class Invoice {
         signatureData: j['signatureData'] as String?,
         signedAt: j['signedAt'] != null ? DateTime.tryParse(j['signedAt'] as String) : null,
         shareToken: j['shareToken'] as String?,
+    signerInfo: j['signerInfo'] is Map ? SignerInfo.fromJson(Map<String, dynamic>.from(j['signerInfo'] as Map)) : null,
         categories: (j['categories'] as List<dynamic>? ?? [])
             .map((e) => QuoteCategory.fromJson(e as Map<String, dynamic>))
             .toList(),
@@ -497,6 +510,7 @@ class Invoice {
     if (signatureData != null) 'signatureData': signatureData,
     if (signedAt != null) 'signedAt': signedAt!.toIso8601String(),
     if (shareToken != null) 'shareToken': shareToken,
+    if (signerInfo != null) 'signerInfo': signerInfo!.toJson(),
     'categories': categories.map((c) => c.toJson()).toList(),
   };
 }
@@ -521,6 +535,128 @@ class AppNotification {
     required this.icon,
     required this.color,
   });
+}
+
+// ── Signer evidence ───────────────────────────────────────────────────────────
+
+class SignerInfo {
+  String name;
+  String phone;
+  String email;
+  String method;      // 'In-app' or 'Web link'
+  String deviceModel;
+  String platform;
+  String osVersion;
+  String userAgent;
+  String ipAddress;
+  String appVersion;
+  String timezone;
+  String docHash;     // SHA-256 of the document content at signing time
+  DateTime capturedAt;
+
+  SignerInfo({
+    required this.name,
+    required this.phone,
+    this.email = '',
+    this.method = 'In-app',
+    this.deviceModel = '',
+    this.platform = '',
+    this.osVersion = '',
+    this.userAgent = '',
+    this.ipAddress = '',
+    this.appVersion = '',
+    this.timezone = '',
+    this.docHash = '',
+    DateTime? capturedAt,
+  }) : capturedAt = capturedAt ?? DateTime.now();
+
+  factory SignerInfo.fromJson(Map<String, dynamic> j) => SignerInfo(
+    name: j['name']?.toString() ?? '',
+    phone: j['phone']?.toString() ?? '',
+    email: j['email']?.toString() ?? '',
+    method: j['method']?.toString() ?? 'In-app',
+    deviceModel: j['deviceModel']?.toString() ?? '',
+    platform: j['platform']?.toString() ?? '',
+    osVersion: j['osVersion']?.toString() ?? '',
+    userAgent: j['userAgent']?.toString() ?? '',
+    ipAddress: j['ipAddress']?.toString() ?? '',
+    appVersion: j['appVersion']?.toString() ?? '',
+    timezone: j['timezone']?.toString() ?? '',
+    docHash: j['docHash']?.toString() ?? '',
+    capturedAt: DateTime.tryParse(j['capturedAt']?.toString() ?? ''),
+  );
+
+  Map<String, dynamic> toJson() => {
+    'name': name, 'phone': phone, 'email': email, 'method': method,
+    'deviceModel': deviceModel, 'platform': platform, 'osVersion': osVersion,
+    'userAgent': userAgent, 'ipAddress': ipAddress, 'appVersion': appVersion,
+    'timezone': timezone, 'docHash': docHash, 'capturedAt': capturedAt.toIso8601String(),
+  };
+
+  /// Label/value pairs for the signature certificate, skipping empty values.
+  List<MapEntry<String, String>> get evidenceRows => [
+    MapEntry('Signer name', name),
+    MapEntry('Phone number', phone),
+    MapEntry('Email', email),
+    MapEntry('Signing method', method),
+    MapEntry('Device', deviceModel),
+    MapEntry('Platform / OS', [platform, osVersion].where((s) => s.isNotEmpty).join(' ')),
+    MapEntry('Browser', userAgent),
+    MapEntry('IP address', ipAddress),
+    MapEntry('Time zone', timezone),
+    MapEntry('App version', appVersion),
+    MapEntry('Captured at (UTC)', capturedAt.toUtc().toIso8601String()),
+    MapEntry('Document SHA-256', docHash),
+  ].where((e) => e.value.trim().isNotEmpty).toList();
+}
+
+// ── Activity Log ──────────────────────────────────────────────────────────────
+
+enum ActivityType { quote, invoice, client, product, project, task, event, signature, payment }
+
+extension ActivityTypeX on ActivityType {
+  Color get color => switch (this) {
+    ActivityType.quote     => const Color(0xFF3B82F6),
+    ActivityType.invoice   => const Color(0xFF8B5CF6),
+    ActivityType.client    => const Color(0xFFFFC107),
+    ActivityType.product   => const Color(0xFF10B981),
+    ActivityType.project   => const Color(0xFFF97316),
+    ActivityType.task      => const Color(0xFF06B6D4),
+    ActivityType.event     => const Color(0xFFEC4899),
+    ActivityType.signature => const Color(0xFF22C55E),
+    ActivityType.payment   => const Color(0xFF14B8A6),
+  };
+  IconData get icon => switch (this) {
+    ActivityType.quote     => Icons.request_quote_outlined,
+    ActivityType.invoice   => Icons.receipt_long_outlined,
+    ActivityType.client    => Icons.person_add_alt_1_outlined,
+    ActivityType.product   => Icons.inventory_2_outlined,
+    ActivityType.project   => Icons.work_outline_rounded,
+    ActivityType.task      => Icons.task_alt_rounded,
+    ActivityType.event     => Icons.event_outlined,
+    ActivityType.signature => Icons.draw_outlined,
+    ActivityType.payment   => Icons.payments_outlined,
+  };
+}
+
+class ActivityEntry {
+  final String id;
+  final String title;
+  final ActivityType type;
+  final DateTime timestamp;
+
+  ActivityEntry({required this.id, required this.title, required this.type, required this.timestamp});
+
+  factory ActivityEntry.fromJson(Map<String, dynamic> j) => ActivityEntry(
+    id: j['id'] as String? ?? '',
+    title: j['title'] as String? ?? '',
+    type: ActivityType.values.firstWhere((t) => t.name == j['type'], orElse: () => ActivityType.quote),
+    timestamp: DateTime.tryParse(j['timestamp'] as String? ?? '') ?? DateTime.now(),
+  );
+
+  Map<String, dynamic> toJson() => {
+    'id': id, 'title': title, 'type': type.name, 'timestamp': timestamp.toIso8601String(),
+  };
 }
 
 // ── Task Models ───────────────────────────────────────────────────────────────
@@ -581,6 +717,7 @@ class AppTask {
   TaskStatus status;
   DateTime dueDate;
   String? linkedQuoteId;
+  String? projectId;
   bool alarmEnabled;
 
   AppTask({
@@ -591,6 +728,7 @@ class AppTask {
     this.status = TaskStatus.todo,
     required this.dueDate,
     this.linkedQuoteId,
+    this.projectId,
     this.alarmEnabled = false,
   });
 
@@ -608,6 +746,7 @@ class AppTask {
     ),
     dueDate: DateTime.tryParse(j['dueDate'] as String? ?? '') ?? DateTime.now(),
     linkedQuoteId: j['linkedQuoteId'] as String?,
+    projectId: j['projectId'] as String?,
     alarmEnabled: j['alarmEnabled'] as bool? ?? false,
   );
 
@@ -617,6 +756,7 @@ class AppTask {
     'dueDate': dueDate.toIso8601String(),
     'alarmEnabled': alarmEnabled,
     if (linkedQuoteId != null) 'linkedQuoteId': linkedQuoteId,
+    if (projectId != null) 'projectId': projectId,
   };
 }
 
@@ -694,6 +834,29 @@ extension ProjectStatusExt on ProjectStatus {
       case ProjectStatus.cancelled:  return Icons.cancel_outlined;
     }
   }
+}
+
+class ProjectNote {
+  final String id;
+  String text;
+  /// Base64-encoded JPEG photos attached to the note.
+  List<String> images;
+  DateTime createdAt;
+
+  ProjectNote({required this.id, this.text = '', List<String>? images, DateTime? createdAt})
+      : images = images ?? [],
+        createdAt = createdAt ?? DateTime.now();
+
+  factory ProjectNote.fromJson(Map<String, dynamic> j) => ProjectNote(
+    id: j['id'] as String? ?? '',
+    text: j['text'] as String? ?? '',
+    images: (j['images'] as List<dynamic>? ?? []).map((e) => e.toString()).toList(),
+    createdAt: DateTime.tryParse(j['createdAt'] as String? ?? '') ?? DateTime.now(),
+  );
+
+  Map<String, dynamic> toJson() => {
+    'id': id, 'text': text, 'images': images, 'createdAt': createdAt.toIso8601String(),
+  };
 }
 
 class ProjectExpense {
@@ -853,6 +1016,9 @@ class Project {
   List<String> invoiceIds;
   List<ProjectExpense> expenses;
   List<ProjectPayment> payments;
+  /// Base64-encoded JPEG photos shown with the project summary.
+  List<String> summaryImages;
+  List<ProjectNote> notes;
   DateTime createdAt;
   DateTime updatedAt;
 
@@ -871,12 +1037,16 @@ class Project {
     List<String>? invoiceIds,
     List<ProjectExpense>? expenses,
     List<ProjectPayment>? payments,
+    List<String>? summaryImages,
+    List<ProjectNote>? notes,
     DateTime? createdAt,
     DateTime? updatedAt,
   })  : quoteIds = quoteIds ?? [],
         invoiceIds = invoiceIds ?? [],
         expenses = expenses ?? [],
         payments = payments ?? [],
+        summaryImages = summaryImages ?? [],
+        notes = notes ?? [],
         createdAt = createdAt ?? DateTime.now(),
         updatedAt = updatedAt ?? DateTime.now();
 
@@ -969,6 +1139,10 @@ class Project {
     payments: (j['payments'] as List<dynamic>? ?? [])
         .map((e) => ProjectPayment.fromJson(e as Map<String, dynamic>))
         .toList(),
+    summaryImages: (j['summaryImages'] as List<dynamic>? ?? []).map((e) => e.toString()).toList(),
+    notes: (j['notes'] as List<dynamic>? ?? [])
+        .map((e) => ProjectNote.fromJson(e as Map<String, dynamic>))
+        .toList(),
     createdAt: DateTime.tryParse(j['createdAt'] as String? ?? '') ?? DateTime.now(),
     updatedAt: DateTime.tryParse(j['updatedAt'] as String? ?? '') ?? DateTime.now(),
   );
@@ -988,6 +1162,8 @@ class Project {
     'invoiceIds': invoiceIds,
     'expenses': expenses.map((e) => e.toJson()).toList(),
     'payments': payments.map((p) => p.toJson()).toList(),
+    'summaryImages': summaryImages,
+    'notes': notes.map((n) => n.toJson()).toList(),
     'createdAt': createdAt.toIso8601String(),
     'updatedAt': updatedAt.toIso8601String(),
   };
@@ -1006,6 +1182,8 @@ class Project {
     List<String>? invoiceIds,
     List<ProjectExpense>? expenses,
     List<ProjectPayment>? payments,
+    List<String>? summaryImages,
+    List<ProjectNote>? notes,
   }) => Project(
     id: id,
     name: name ?? this.name,
@@ -1021,6 +1199,8 @@ class Project {
     invoiceIds: invoiceIds ?? List.from(this.invoiceIds),
     expenses: expenses ?? List.from(this.expenses),
     payments: payments ?? List.from(this.payments),
+    summaryImages: summaryImages ?? List.from(this.summaryImages),
+    notes: notes ?? List.from(this.notes),
     createdAt: createdAt,
     updatedAt: DateTime.now(),
   );

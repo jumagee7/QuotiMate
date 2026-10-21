@@ -1,6 +1,7 @@
 // pages/client_detail_page.dart — QuotiMate Client Detail Page
 // Shows client info + 3 tabs: Quotes, Invoices, Projects done for this client.
 
+import '../widgets/project_card.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -16,7 +17,6 @@ import 'quote_editor_page.dart';
 import 'enquiry_invoice_page.dart';
 import 'pdf_viewer_page.dart';
 import 'signature_page.dart';
-import 'project_quickbook_page.dart';
 
 const _cSurface = Color(0xFF161B26);
 const _cBorder  = Color(0xFF2A3045);
@@ -547,101 +547,8 @@ class _ClientDetailPageState extends State<ClientDetailPage> with SingleTickerPr
       itemCount: projects.length,
       itemBuilder: (context, i) {
         final p = projects[i];
-        final collected = p.totalPaymentsReceived;
-        final profit = p.netProfitRealized();
 
-        return Container(
-          margin: const EdgeInsets.only(bottom: 12),
-          decoration: BoxDecoration(
-            color: _cSurface,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: _cBorder),
-          ),
-          child: Material(
-            color: Colors.transparent,
-            borderRadius: BorderRadius.circular(14),
-            child: InkWell(
-              borderRadius: BorderRadius.circular(14),
-              onTap: () => openProjectQuickBookPage(context, projectId: p.id),
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Expanded(
-                          child: Text(
-                            p.name,
-                            style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                          decoration: BoxDecoration(
-                            color: p.status.color.withValues(alpha: 0.15),
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: p.status.color.withValues(alpha: 0.5)),
-                          ),
-                          child: Text(
-                            p.status.label,
-                            style: TextStyle(color: p.status.color, fontSize: 11, fontWeight: FontWeight.bold),
-                          ),
-                        ),
-                      ],
-                    ),
-                    if (p.location.isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      Row(
-                        children: [
-                          const Icon(Icons.place_outlined, size: 12, color: _cW38),
-                          const SizedBox(width: 4),
-                          Text(p.location, style: const TextStyle(color: _cW70, fontSize: 12)),
-                        ],
-                      ),
-                    ],
-                    const SizedBox(height: 12),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text('BUDGET', style: TextStyle(color: _cW38, fontSize: 10, fontWeight: FontWeight.w600)),
-                            Text(_currencyFmt.format(p.budget), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
-                          ],
-                        ),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text('COLLECTED', style: TextStyle(color: _cW38, fontSize: 10, fontWeight: FontWeight.w600)),
-                            Text(_currencyFmt.format(collected), style: const TextStyle(color: Color(0xFF34D399), fontWeight: FontWeight.bold, fontSize: 13)),
-                          ],
-                        ),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text('PROFIT', style: TextStyle(color: _cW38, fontSize: 10, fontWeight: FontWeight.w600)),
-                            Text(
-                              _currencyFmt.format(profit),
-                              style: TextStyle(
-                                color: profit >= 0 ? const Color(0xFF34D399) : Colors.redAccent,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 13,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        );
+        return ProjectCard(project: p, appState: appState);
       },
     );
   }

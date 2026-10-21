@@ -122,7 +122,7 @@ class _QuotiMateShellState extends State<QuotiMateShell> {
                           color: const Color(0xFFFFC107).withValues(alpha: 0.15),
                           borderRadius: BorderRadius.circular(8),
                         ),
-                        child: Image.asset('assets/logo2.png', width: 24, height: 24),
+                        child: Image.asset('assets/modernedge_icon.png', width: 24, height: 24),
                       ),
                       const SizedBox(width: 10),
                       Text(
@@ -518,7 +518,12 @@ class _QuotiMateShellState extends State<QuotiMateShell> {
             final status = CloudSyncService().status;
             final isSynced = status == SyncStatus.synced;
             final isSyncing = status == SyncStatus.syncing;
-            return Container(
+            return Tooltip(
+              message: 'Cloud sync status — tap for details',
+              child: InkWell(
+                borderRadius: BorderRadius.circular(20),
+                onTap: () => _showSyncStatusDialog(context, status),
+                child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               decoration: BoxDecoration(
                 color: isSynced
@@ -558,6 +563,8 @@ class _QuotiMateShellState extends State<QuotiMateShell> {
                     ),
                   ],
                 ],
+              ),
+            ),
               ),
             );
           },
@@ -962,3 +969,27 @@ class _NotificationTile extends StatelessWidget {
   }
 }
 
+void _showSyncStatusDialog(BuildContext context, SyncStatus status) {
+  final (color, title, meaning) = switch (status) {
+    SyncStatus.synced => (const Color(0xFF10B981), 'Cloud connected',
+        'Your quotes, invoices, clients, projects and signatures are backed up to the cloud and shared across your devices. New quote numbers can be issued.'),
+    SyncStatus.syncing => (const Color(0xFFFFC107), 'Syncing…',
+        'Changes are being uploaded to or downloaded from the cloud right now.'),
+    _ => (Colors.grey, 'Offline / local only',
+        'You are not signed in or not connected. Data is saved on this device only and will sync once you reconnect. New quote numbers require an internet connection.'),
+  };
+  showDialog<void>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      backgroundColor: const Color(0xFF161B26),
+      title: Row(children: [
+        Icon(Icons.circle, color: color, size: 14),
+        const SizedBox(width: 10),
+        Text(title, style: const TextStyle(color: Colors.white, fontSize: 17)),
+      ]),
+      content: Text('$meaning\n\nStatus: ${CloudSyncService().statusMessage}',
+          style: const TextStyle(color: Color(0xFFB0B8D0), fontSize: 13.5, height: 1.4)),
+      actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('OK'))],
+    ),
+  );
+}

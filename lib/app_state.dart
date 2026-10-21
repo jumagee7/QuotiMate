@@ -88,6 +88,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> _init() async {
     await _load();
+    NotificationService().rescheduleAll(tasks: _tasks, events: _events);
 
     // Load products from itemlist.json if products list is empty (migration)
     if (_products.isEmpty) {
@@ -353,6 +354,7 @@ class AppState extends ChangeNotifier {
   static const _kTasks     = 'qm_tasks';
   static const _kEvents    = 'qm_events';
   static const _kProjects  = 'qm_projects';
+  static const _kActivities = 'qm_activities';
   static const _kSettings  = 'qm_settings';
   static const _kProfile   = 'qm_profile';
   static const _kSeeded    = 'qm_seeded';
@@ -399,6 +401,16 @@ class AppState extends ChangeNotifier {
       _events.addAll(list.map((e) => AppEvent.fromJson(e as Map<String, dynamic>)));
     }
     // Projects
+    final activitiesRaw = prefs.getString(_kActivities);
+    if (activitiesRaw != null) {
+      try {
+        _activities
+          ..clear()
+          ..addAll((jsonDecode(activitiesRaw) as List).map((e) => ActivityEntry.fromJson(e as Map<String, dynamic>)));
+      } catch (e) {
+        debugPrint('Activity log load error: $e');
+      }
+    }
     final projectsRaw = prefs.getString(_kProjects);
     if (projectsRaw != null) {
       final list = jsonDecode(projectsRaw) as List<dynamic>;
@@ -433,6 +445,20 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// Full JSON backup of all business data (used by Settings → Export Data).
+  String exportBackupJson() => const JsonEncoder.withIndent('  ').convert({
+    'exportedAt': DateTime.now().toIso8601String(),
+    'company': companyName,
+    'clients': _clients.map((e) => e.toJson()).toList(),
+    'products': _products.map((e) => e.toJson()).toList(),
+    'quotes': _quotes.map((e) => e.toJson()).toList(),
+    'invoices': _invoices.map((e) => e.toJson()).toList(),
+    'tasks': _tasks.map((e) => e.toJson()).toList(),
+    'events': _events.map((e) => e.toJson()).toList(),
+    'projects': _projects.map((e) => e.toJson()).toList(),
+    'activities': _activities.map((e) => e.toJson()).toList(),
+  });
+
   Future<void> _save() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_kSeeded, true);
@@ -443,6 +469,7 @@ class AppState extends ChangeNotifier {
     await prefs.setString(_kTasks,    jsonEncode(_tasks.map((e)    => e.toJson()).toList()));
     await prefs.setString(_kEvents,   jsonEncode(_events.map((e)   => e.toJson()).toList()));
     await prefs.setString(_kProjects, jsonEncode(_projects.map((e) => e.toJson()).toList()));
+    await prefs.setString(_kActivities, jsonEncode(_activities.map((e) => e.toJson()).toList()));
     await prefs.setString(_kSettings, jsonEncode({
       'companyName': companyName, 'companyPhone': companyPhone,
       'companyEmail': companyEmail, 'companyAddress': companyAddress,
@@ -500,7 +527,19 @@ class AppState extends ChangeNotifier {
   }
 
   List<Quote>  get pinnedQuotes  => _quotes.where((q) => q.isPinned).toList();
-  List<String> get activities    => _notifications.map((n) => n.title).toList();
+  List<ActivityEntry> get activities => List.unmodifiable(_activities);
+
+  final List<ActivityEntry> _activities = [];
+
+  void logActivity(String title, ActivityType type) {
+    _activities.insert(0, ActivityEntry(
+      id: 'act_${DateTime.now().microsecondsSinceEpoch}',
+      title: title,
+      type: type,
+      timestamp: DateTime.now(),
+    ));
+    if (_activities.length > 100) _activities.removeRange(100, _activities.length);
+  }
 
   int    get totalQuotes         => _quotes.length;
   int    get approvedCount       => _quotes.where((q) => q.status == QuoteStatus.approved).length;
@@ -611,6 +650,7 @@ class AppState extends ChangeNotifier {
 
   // ── Clients ────────────────────────────────────────────────────────────────
   void addClient(Client client) {
+    logActivity('Client "${client.name}" added', ActivityType.client);
     _clients.add(client);
     _save();
     CloudSyncService().saveClient(client);
@@ -634,12 +674,14 @@ class AppState extends ChangeNotifier {
 
   // ── Products ───────────────────────────────────────────────────────────────
   void addProduct(Product product) {
+    logActivity('Product "${product.name}" added', ActivityType.product);
     _products.add(product);
     _save();
     CloudSyncService().saveProduct(product);
     notifyListeners();
   }
   void updateProduct(Product product) {
+    logActivity('Product "${product.name}" updated', ActivityType.product);
     final idx = _products.indexWhere((p) => p.id == product.id);
     if (idx != -1) {
       _products[idx] = product;
@@ -648,6 +690,38 @@ class AppState extends ChangeNotifier {
       notifyListeners();
     }
   }
+  /// Quote items whose name doesn't match any catalogue product (deduplicated).
+  List<QuoteItem> findItemsNotInCatalogue(Iterable<QuoteItem> items) {
+    final known = _products.map((p) => p.name.trim().toLowerCase()).toSet();
+    final seen = <String>{};
+    final result = <QuoteItem>[];
+    for (final i in items) {
+      final key = i.name.trim().toLowerCase();
+      if (key.isEmpty || known.contains(key) || !seen.add(key)) continue;
+      result.add(i);
+    }
+    return result;
+  }
+
+  void addProductsFromItems(List<QuoteItem> items) {
+    if (items.isEmpty) return;
+    final base = DateTime.now().millisecondsSinceEpoch;
+    for (var i = 0; i < items.length; i++) {
+      final item = items[i];
+      final product = Product(
+        id: 'p_${base}_$i',
+        name: item.name.trim(),
+        unitPrice: item.unitPrice,
+        unit: item.unit,
+      );
+      _products.add(product);
+      CloudSyncService().saveProduct(product);
+    }
+    logActivity('Added ${items.length} new product(s) to catalogue', ActivityType.product);
+    _save();
+    notifyListeners();
+  }
+
   void deleteProduct(String id) {
     _products.removeWhere((p) => p.id == id);
     _save();
@@ -657,12 +731,14 @@ class AppState extends ChangeNotifier {
 
   // ── Quotes ─────────────────────────────────────────────────────────────────
   void addQuote(Quote quote) {
+    logActivity('Quotation #${quote.id} created for ${quote.clientName}', ActivityType.quote);
     _quotes.add(quote);
     _save();
     CloudSyncService().saveQuote(quote);
     notifyListeners();
   }
   void updateQuote(Quote quote) {
+    logActivity('Quotation #${quote.id} updated (${quote.status.name})', ActivityType.quote);
     final idx = _quotes.indexWhere((q) => q.id == quote.id);
     if (idx != -1) {
       _quotes[idx] = quote;
@@ -672,17 +748,42 @@ class AppState extends ChangeNotifier {
     }
   }
   void deleteQuote(String id) {
+    logActivity('Quotation #$id deleted', ActivityType.quote);
     _quotes.removeWhere((q) => q.id == id);
+    final lastIssued = nextQuoteNumber - 1;
+    if (id == 'Q-$lastIssued') {
+      nextQuoteNumber = lastIssued;
+      CloudSyncService().releaseQuoteNumber(lastIssued);
+    }
     _save();
     CloudSyncService().deleteQuote(id);
     notifyListeners();
   }
 
-  void markQuoteSigned(String quoteId, String signatureBase64, [DateTime? signedAt]) {
+  /// Reserves a new sequential quote ID (e.g. `Q-1005`) from the cloud.
+  /// Returns null when offline — quote numbers are only issued online so that
+  /// numbering stays unique across devices.
+  Future<String?> reserveQuoteId() async {
+    final taken = <int>{};
+    for (final q in _quotes) {
+      final n = int.tryParse(q.id.replaceFirst('Q-', ''));
+      if (n != null) taken.add(n);
+    }
+    final number = await CloudSyncService().reserveNextQuoteNumber(nextQuoteNumber, taken: taken);
+    if (number == null) return null;
+    nextQuoteNumber = number + 1;
+    _save();
+    notifyListeners();
+    return 'Q-$number';
+  }
+
+  void markQuoteSigned(String quoteId, String signatureBase64, [DateTime? signedAt, SignerInfo? signerInfo]) {
+    logActivity('Quotation #$quoteId signed by client', ActivityType.signature);
     final idx = _quotes.indexWhere((q) => q.id == quoteId);
     if (idx != -1) {
       _quotes[idx].signatureData = signatureBase64;
       _quotes[idx].signedAt = signedAt ?? DateTime.now();
+      if (signerInfo != null) _quotes[idx].signerInfo = signerInfo;
       _quotes[idx].status = QuoteStatus.approved;
       _save();
       CloudSyncService().saveQuote(_quotes[idx]);
@@ -690,11 +791,13 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  void markInvoiceSigned(String invoiceId, String signatureBase64, [DateTime? signedAt]) {
+  void markInvoiceSigned(String invoiceId, String signatureBase64, [DateTime? signedAt, SignerInfo? signerInfo]) {
+    logActivity('Invoice #$invoiceId signed by client', ActivityType.signature);
     final idx = _invoices.indexWhere((i) => i.id == invoiceId);
     if (idx != -1) {
       _invoices[idx].signatureData = signatureBase64;
       _invoices[idx].signedAt = signedAt ?? DateTime.now();
+      if (signerInfo != null) _invoices[idx].signerInfo = signerInfo;
       _save();
       CloudSyncService().saveInvoice(_invoices[idx]);
       notifyListeners();
@@ -709,7 +812,10 @@ class AppState extends ChangeNotifier {
         final signedAt = data['signedAt'] != null
             ? DateTime.tryParse(data['signedAt'].toString())
             : DateTime.now();
-        markQuoteSigned(quoteId, sig, signedAt);
+        final signer = data['signerInfo'] is Map
+            ? SignerInfo.fromJson(Map<String, dynamic>.from(data['signerInfo'] as Map))
+            : null;
+        markQuoteSigned(quoteId, sig, signedAt, signer);
         return true;
       }
     }
@@ -724,7 +830,10 @@ class AppState extends ChangeNotifier {
         final signedAt = data['signedAt'] != null
             ? DateTime.tryParse(data['signedAt'].toString())
             : DateTime.now();
-        markInvoiceSigned(invoiceId, sig, signedAt);
+        final signer = data['signerInfo'] is Map
+            ? SignerInfo.fromJson(Map<String, dynamic>.from(data['signerInfo'] as Map))
+            : null;
+        markInvoiceSigned(invoiceId, sig, signedAt, signer);
         return true;
       }
     }
@@ -739,6 +848,7 @@ class AppState extends ChangeNotifier {
 
   // ── Invoices ───────────────────────────────────────────────────────────────
   void addInvoice(Invoice invoice) {
+    logActivity('Invoice #${invoice.id} created for ${invoice.clientName}', ActivityType.invoice);
     final idx = _invoices.indexWhere((i) => i.id == invoice.id);
     if (idx != -1) {
       _invoices[idx] = invoice;
@@ -768,6 +878,7 @@ class AppState extends ChangeNotifier {
   }
 
   void updateInvoiceStatus(String invoiceId, InvoiceStatus newStatus) {
+    logActivity('Invoice #$invoiceId marked ${newStatus.name}', ActivityType.invoice);
     final idx = _invoices.indexWhere((i) => i.id == invoiceId);
     if (idx != -1) {
       _invoices[idx].status = newStatus;
@@ -779,6 +890,7 @@ class AppState extends ChangeNotifier {
 
   // ── Tasks ──────────────────────────────────────────────────────────────────
   void addTask(AppTask task) {
+    logActivity('Task "${task.title}" added', ActivityType.task);
     _tasks.add(task);
     _save();
     CloudSyncService().saveTask(task);
@@ -801,6 +913,9 @@ class AppState extends ChangeNotifier {
       notifyListeners();
     }
   }
+  List<AppTask> tasksForProject(String projectId) =>
+      _tasks.where((t) => t.projectId == projectId).toList();
+
   void deleteTask(String id) {
     _tasks.removeWhere((t) => t.id == id);
     _save(); 
@@ -811,6 +926,7 @@ class AppState extends ChangeNotifier {
 
   // ── Events ────────────────────────────────────────────────────────────────
   void addEvent(AppEvent event) {
+    logActivity('Event "${event.title}" scheduled', ActivityType.event);
     _events.add(event);
     _save();
     CloudSyncService().saveEvent(event);
@@ -837,6 +953,7 @@ class AppState extends ChangeNotifier {
 
   // ── Projects ───────────────────────────────────────────────────────────────
   void addProject(Project project) {
+    logActivity('Project "${project.name}" created', ActivityType.project);
     _projects.insert(0, project);
     _save();
     CloudSyncService().saveProject(project);
@@ -875,6 +992,25 @@ class AppState extends ChangeNotifier {
   }
 
   // ── Project Expenses ───────────────────────────────────────────────────────
+  void addProjectNote(String projectId, ProjectNote note) {
+    final project = getProject(projectId);
+    if (project == null) return;
+    updateProject(project.copyWith(notes: [note, ...project.notes]));
+    logActivity('Note added to project ${project.name}', ActivityType.project);
+  }
+
+  void deleteProjectNote(String projectId, String noteId) {
+    final project = getProject(projectId);
+    if (project == null) return;
+    updateProject(project.copyWith(notes: project.notes.where((n) => n.id != noteId).toList()));
+  }
+
+  void setProjectSummaryImages(String projectId, List<String> images) {
+    final project = getProject(projectId);
+    if (project == null) return;
+    updateProject(project.copyWith(summaryImages: images));
+  }
+
   void addProjectExpense(String projectId, ProjectExpense expense) {
     final idx = _projects.indexWhere((p) => p.id == projectId);
     if (idx != -1) {
@@ -913,6 +1049,7 @@ class AppState extends ChangeNotifier {
 
   // ── Project Payments ───────────────────────────────────────────────────────
   void addProjectPayment(String projectId, ProjectPayment payment) {
+    logActivity('Payment recorded on project ${getProject(projectId)?.name ?? projectId}', ActivityType.payment);
     final idx = _projects.indexWhere((p) => p.id == projectId);
     if (idx != -1) {
       _projects[idx].payments.insert(0, payment);

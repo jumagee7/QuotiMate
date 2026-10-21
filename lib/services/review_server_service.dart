@@ -6,6 +6,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import '../app_state.dart';
+import 'signer_info_service.dart';
 import '../models.dart';
 import 'html_review_service.dart';
 import 'notification_service.dart';
@@ -181,14 +182,44 @@ class ReviewServerService {
         return;
       }
 
+      final isInvoice = docType.toLowerCase() == 'invoice';
+      final quoteDoc = isInvoice ? null : _appState!.quotes.where((q) => q.id == docId).firstOrNull;
+      final invoiceDoc = isInvoice ? _appState!.invoices.where((i) => i.id == docId).firstOrNull : null;
+      if (quoteDoc == null && invoiceDoc == null) {
+        res.statusCode = HttpStatus.notFound;
+        res.write(jsonEncode({'error': 'Document not found'}));
+        await res.close();
+        return;
+      }
+      final expectedToken = quoteDoc?.shareToken ?? invoiceDoc?.shareToken;
+      if (expectedToken != null && expectedToken.isNotEmpty && data['token'] != expectedToken) {
+        res.statusCode = HttpStatus.forbidden;
+        res.write(jsonEncode({'error': 'Invalid or expired signing link'}));
+        await res.close();
+        return;
+      }
+
+      final rawSigner = data['signerInfo'] is Map ? Map<String, dynamic>.from(data['signerInfo'] as Map) : <String, dynamic>{};
+      final signer = SignerInfo.fromJson(rawSigner)
+        ..method = 'Web link'
+        ..ipAddress = request.connectionInfo?.remoteAddress.address ?? ''
+        ..userAgent = request.headers.value(HttpHeaders.userAgentHeader) ?? (rawSigner['userAgent']?.toString() ?? '')
+        ..docHash = SignerInfoService.hashDocument(quoteDoc?.toJson() ?? invoiceDoc!.toJson());
+      if (signer.name.trim().isEmpty || signer.phone.trim().isEmpty) {
+        res.statusCode = HttpStatus.badRequest;
+        res.write(jsonEncode({'error': 'Signer name and phone number are required'}));
+        await res.close();
+        return;
+      }
+
       if (docType.toLowerCase() == 'invoice') {
-        _appState!.markInvoiceSigned(docId, sigBase64);
+        _appState!.markInvoiceSigned(docId, sigBase64, signedAt, signer);
         final inv = _appState!.invoices.where((i) => i.id == docId).firstOrNull;
         if (inv != null && signedAt != null) {
           inv.signedAt = signedAt;
         }
       } else {
-        _appState!.markQuoteSigned(docId, sigBase64);
+        _appState!.markQuoteSigned(docId, sigBase64, signedAt, signer);
         final q = _appState!.quotes.where((i) => i.id == docId).firstOrNull;
         if (q != null) {
           if (signedAt != null) q.signedAt = signedAt;

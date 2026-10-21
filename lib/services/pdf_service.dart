@@ -45,6 +45,7 @@ class PdfService {
       categories: invoice.categories,
       signatureData: invoice.signatureData,
       signedAt: invoice.signedAt,
+      signerInfo: invoice.signerInfo,
       appendCertificate: appendCertificate,
     );
   }
@@ -65,7 +66,7 @@ class PdfService {
 
     pw.MemoryImage? logoImage;
     try {
-      final logoBytes = await rootBundle.load('assets/logo.png');
+      final logoBytes = await rootBundle.load('assets/modernedge_logo.png');
       logoImage = pw.MemoryImage(logoBytes.buffer.asUint8List());
     } catch (e, st) {
       debugPrint('Error loading logo: $e\n$st');
@@ -301,6 +302,7 @@ class PdfService {
             signedDate: signedDate,
             sigImage: pw.MemoryImage(sigBytes),
             goldColor: goldColor,
+            signer: quote.signerInfo,
           ),
         );
       }
@@ -328,6 +330,7 @@ class PdfService {
     required List<QuoteCategory> categories,
     String? signatureData,
     DateTime? signedAt,
+    SignerInfo? signerInfo,
     bool appendCertificate = false,
   }) async {
     final pdf = pw.Document();
@@ -340,7 +343,7 @@ class PdfService {
 
     pw.MemoryImage? logoImage;
     try {
-      final logoBytes = await rootBundle.load('assets/logo.png');
+      final logoBytes = await rootBundle.load('assets/modernedge_logo.png');
       logoImage = pw.MemoryImage(logoBytes.buffer.asUint8List());
     } catch (e, st) {
       debugPrint('Error loading logo in invoice: $e\n$st');
@@ -779,6 +782,7 @@ class PdfService {
             signedDate: signedDate,
             sigImage: pw.MemoryImage(sigBytes),
             goldColor: goldColor,
+            signer: signerInfo,
           ),
         );
       }
@@ -1225,6 +1229,7 @@ class PdfService {
             signedDate: signedDate,
             sigImage: pw.MemoryImage(sigBytes),
             goldColor: PdfColor.fromHex('#E7C67B'),
+            signer: quote.signerInfo,
           ),
         );
       }
@@ -1562,7 +1567,9 @@ class PdfService {
               mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
               children: [
                 pw.Text(
-                  quote.clientName.isEmpty ? 'Client Signature' : quote.clientName,
+                  quote.signerInfo != null && quote.signerInfo!.name.isNotEmpty
+                      ? '${quote.signerInfo!.name} | ${quote.signerInfo!.phone}'
+                      : (quote.clientName.isEmpty ? 'Client Signature' : quote.clientName),
                   style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold),
                 ),
                 pw.Text(
@@ -1708,6 +1715,7 @@ class PdfService {
     required String signedDate,
     required pw.ImageProvider sigImage,
     required PdfColor goldColor,
+    SignerInfo? signer,
   }) {
     return pw.Page(
       pageFormat: PdfPageFormat.a4,
@@ -1802,6 +1810,29 @@ class PdfService {
                 ],
               ),
             ),
+            if (signer != null) ...[
+              pw.SizedBox(height: 24),
+              pw.Text('Signer Verification Details',
+                  style: pw.TextStyle(fontSize: 13, fontWeight: pw.FontWeight.bold, color: PdfColors.grey800)),
+              pw.SizedBox(height: 8),
+              pw.Table(
+                border: pw.TableBorder.all(color: PdfColors.grey300, width: 0.5),
+                columnWidths: const {0: pw.FixedColumnWidth(120), 1: pw.FlexColumnWidth()},
+                children: [
+                  for (final row in signer.evidenceRows)
+                    pw.TableRow(children: [
+                      pw.Padding(
+                        padding: const pw.EdgeInsets.all(4),
+                        child: pw.Text(row.key, style: const pw.TextStyle(fontSize: 8.5, color: PdfColors.grey700)),
+                      ),
+                      pw.Padding(
+                        padding: const pw.EdgeInsets.all(4),
+                        child: pw.Text(row.value, style: pw.TextStyle(fontSize: 8.5, fontWeight: pw.FontWeight.bold)),
+                      ),
+                    ]),
+                ],
+              ),
+            ],
             pw.SizedBox(height: 40),
 
             // Legal notice

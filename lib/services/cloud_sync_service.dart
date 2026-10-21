@@ -2,6 +2,7 @@
 // Synchronizes quotes, invoices, clients, products, tasks, schedules, and quote numbers.
 
 import 'dart:async';
+import 'dart:io' show InternetAddress;
 import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -378,26 +379,62 @@ class CloudSyncService extends ChangeNotifier {
     }
   }
 
-  // Atomically increment and get the next sequential quote number in cloud
-  Future<int> getAndIncrementNextQuoteNumber(int currentFallback) async {
-    if (!_firebaseAvailable) return currentFallback;
+  /// True when the device can actually reach Firestore (not just when the
+  /// Firebase SDK is initialised).
+  Future<bool> hasInternet() async {
+    if (kIsWeb) return true;
     try {
-      final docRef = _settingsDoc;
-      if (docRef == null) return currentFallback;
+      final result = await InternetAddress.lookup('firestore.googleapis.com')
+          .timeout(const Duration(seconds: 5));
+      return result.isNotEmpty && result.first.rawAddress.isNotEmpty;
+    } catch (_) {
+      return false;
+    }
+  }
 
+  /// Atomically reserves the next sequential quote number in the cloud.
+  /// Returns null when offline or when the cloud transaction fails, so callers
+  /// can refuse to create a quote instead of generating a clashing number.
+  Future<int?> reserveNextQuoteNumber(int localNext, {Set<int> taken = const {}}) async {
+    if (!_firebaseAvailable) return null;
+    final docRef = _settingsDoc;
+    if (docRef == null) return null;
+    if (!await hasInternet()) return null;
+    try {
       return await FirebaseFirestore.instance.runTransaction<int>((tx) async {
         final snapshot = await tx.get(docRef);
-        int nextNum = currentFallback;
-        if (snapshot.exists) {
-          final data = snapshot.data() as Map<String, dynamic>?;
-          nextNum = data?['nextQuoteNumber'] as int? ?? currentFallback;
+        final data = snapshot.data() as Map<String, dynamic>?;
+        final cloudNext = (data?['nextQuoteNumber'] as num?)?.toInt() ?? localNext;
+        var next = cloudNext > localNext ? cloudNext : localNext;
+        while (taken.contains(next)) {
+          next++;
         }
-        tx.set(docRef, {'nextQuoteNumber': nextNum + 1}, SetOptions(merge: true));
-        return nextNum;
-      });
+        tx.set(docRef, {'nextQuoteNumber': next + 1}, SetOptions(merge: true));
+        return next;
+      }).timeout(const Duration(seconds: 12));
     } catch (e) {
-      debugPrint('Increment quote number error: $e');
-      return currentFallback;
+      debugPrint('Reserve quote number error: $e');
+      return null;
+    }
+  }
+
+  /// Gives a quote number back to the pool if it is still the most recently
+  /// issued one (i.e. the deleted quote was the last quote).
+  Future<void> releaseQuoteNumber(int number) async {
+    if (!_firebaseAvailable) return;
+    final docRef = _settingsDoc;
+    if (docRef == null) return;
+    try {
+      await FirebaseFirestore.instance.runTransaction<void>((tx) async {
+        final snapshot = await tx.get(docRef);
+        final data = snapshot.data() as Map<String, dynamic>?;
+        final cloudNext = (data?['nextQuoteNumber'] as num?)?.toInt();
+        if (cloudNext == number + 1) {
+          tx.set(docRef, {'nextQuoteNumber': number}, SetOptions(merge: true));
+        }
+      }).timeout(const Duration(seconds: 12));
+    } catch (e) {
+      debugPrint('Release quote number error: $e');
     }
   }
 
