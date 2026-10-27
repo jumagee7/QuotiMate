@@ -8,6 +8,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
   firebase_auth
   firebase_core
   flutter_timezone
+  geolocator_windows
   printing
   url_launcher_windows
 )

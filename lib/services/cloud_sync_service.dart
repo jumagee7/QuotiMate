@@ -387,11 +387,14 @@ class CloudSyncService extends ChangeNotifier {
 
       return await FirebaseFirestore.instance.runTransaction<int>((tx) async {
         final snapshot = await tx.get(docRef);
-        int nextNum = currentFallback;
+        int stored = currentFallback;
         if (snapshot.exists) {
           final data = snapshot.data() as Map<String, dynamic>?;
-          nextNum = data?['nextQuoteNumber'] as int? ?? currentFallback;
+          stored = data?['nextQuoteNumber'] as int? ?? currentFallback;
         }
+        // Never hand out a number below what this device already knows about,
+        // otherwise a stale cloud counter would re-issue existing numbers.
+        final nextNum = stored > currentFallback ? stored : currentFallback;
         tx.set(docRef, {'nextQuoteNumber': nextNum + 1}, SetOptions(merge: true));
         return nextNum;
       });

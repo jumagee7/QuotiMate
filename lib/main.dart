@@ -3,12 +3,28 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'app_state.dart';
 import 'main_ui.dart';
 import 'pages/sign_in_page.dart';
 import 'services/auth_service.dart';
 import 'services/cloud_sync_service.dart';
 import 'services/notification_service.dart';
+
+/// Background notification response handler.
+///
+/// Must be a TOP-LEVEL function in the app's entry-point file (main.dart) and
+/// carry `@pragma('vm:entry-point')`. When the app is backgrounded or killed,
+/// flutter_local_notifications spins up a fresh Dart isolate rooted at main()
+/// and invokes this function. Without it, scheduled alarms are delivered to
+/// the Android tray but Dart never wakes up to handle actions or taps.
+@pragma('vm:entry-point')
+void _notificationBackgroundHandler(NotificationResponse response) {
+  // Background isolate — no widget tree, no app state.
+  // Payloads are re-read by the foreground shell when the user opens the app.
+  debugPrint('[BG] notification id=${response.id} '
+      'action=${response.actionId} payload=${response.payload}');
+}
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -21,8 +37,11 @@ void main() async {
   }
 
   // Initialize Core Services
-  await NotificationService().init();
-  debugPrint('Notification service initialized');
+  await NotificationService().init(onBackground: _notificationBackgroundHandler);
+
+  debugPrint(NotificationService().initError == null
+      ? 'Notification service initialized'
+      : 'Notification service DOWN: ${NotificationService().initError}');
   await AuthService().init();
   await CloudSyncService().init();
 
@@ -35,16 +54,31 @@ void main() async {
   });
 }
 
-class QuotiMateApp extends StatelessWidget {
+class QuotiMateApp extends StatefulWidget {
   const QuotiMateApp({super.key});
+
+  @override
+  State<QuotiMateApp> createState() => _QuotiMateAppState();
+}
+
+class _QuotiMateAppState extends State<QuotiMateApp> {
+  final AppState _state = AppState();
+
+  @override
+  void dispose() {
+    // AppState owns the schedule ticker; without this it outlives the tree.
+    _state.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return AppStateProvider(
-      state: AppState(),
+      state: _state,
       child: MaterialApp(
         title: 'QuotiMate',
         debugShowCheckedModeBanner: false,
+        navigatorKey: appNavigatorKey,
         scaffoldMessengerKey: rootMessengerKey,
         theme: ThemeData(
           useMaterial3: true,

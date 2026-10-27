@@ -174,6 +174,19 @@ class ReviewServerService {
       final signedAtStr = data['signedAt'] as String?;
       final signedAt = signedAtStr != null ? DateTime.tryParse(signedAtStr) : DateTime.now();
 
+      String? text(String key) {
+        final v = data[key];
+        return v is String && v.trim().isNotEmpty ? v.trim() : null;
+      }
+
+      final meta = SignatureMetadata(
+        signerName: text('signerName'),
+        signerPhone: text('signerPhone'),
+        device: text('signerDevice'),
+        appVersion: text('signerAppVersion'),
+        location: text('signerLocation'),
+      );
+
       if (docId.isEmpty || sigBase64.isEmpty) {
         res.statusCode = HttpStatus.badRequest;
         res.write(jsonEncode({'error': 'Missing docId or signatureData'}));
@@ -181,26 +194,42 @@ class ReviewServerService {
         return;
       }
 
-      if (docType.toLowerCase() == 'invoice') {
-        _appState!.markInvoiceSigned(docId, sigBase64);
-        final inv = _appState!.invoices.where((i) => i.id == docId).firstOrNull;
-        if (inv != null && signedAt != null) {
-          inv.signedAt = signedAt;
+      final isInvoice = docType.toLowerCase() == 'invoice';
+      final exists = isInvoice
+          ? _appState!.invoices.any((i) => i.id == docId)
+          : _appState!.quotes.any((q) => q.id == docId);
+
+      if (exists) {
+        final String clientName;
+        if (isInvoice) {
+          _appState!.markInvoiceSigned(docId, sigBase64, signedAt, meta);
+          clientName =
+              _appState!.invoices.firstWhere((i) => i.id == docId).clientName;
+        } else {
+          _appState!.markQuoteSigned(docId, sigBase64, signedAt, meta);
+          clientName =
+              _appState!.quotes.firstWhere((q) => q.id == docId).clientName;
         }
+        _appState!.announceSignatureApplied(clientName, docId, meta);
       } else {
-        _appState!.markQuoteSigned(docId, sigBase64);
-        final q = _appState!.quotes.where((i) => i.id == docId).firstOrNull;
-        if (q != null) {
-          if (signedAt != null) q.signedAt = signedAt;
-          q.status = QuoteStatus.approved;
-        }
+        debugPrint('Sign API: $docType #$docId not found in this app instance.');
       }
+
+      final who = meta.signerName ?? 'Client';
+      final evidence = <String>[
+        if (meta.signerPhone != null) 'WhatsApp ${meta.signerPhone}',
+        if (meta.location != null) 'Location ${meta.location}',
+        if (meta.device != null) meta.device!,
+      ];
 
       try {
         await NotificationService().showInstantNotification(
           id: docId.hashCode,
-          title: '$docType Approved & Signed! ✍️',
-          body: 'Client signed $docType #$docId. PDF updated in QuotiMate.',
+          title: exists ? '$docType signed by $who ✍️' : '$docType signature received',
+          body: exists
+              ? '$who approved $docType #$docId. '
+                  '${evidence.isEmpty ? 'PDF updated in QuotiMate.' : '${evidence.join(' · ')}.'}'
+              : 'Signature for $docType #$docId arrived but that document is not in this app.',
         );
       } catch (e) {
         debugPrint('Notification notice: $e');
@@ -210,9 +239,12 @@ class ReviewServerService {
       res.headers.contentType = ContentType.json;
       res.write(jsonEncode({
         'success': true,
+        'applied': exists,
         'docId': docId,
         'docType': docType,
-        'message': 'Signature recorded and applied in QuotiMate app.',
+        'message': exists
+            ? 'Signature recorded and applied in QuotiMate app.'
+            : 'Signature received but $docType #$docId is not open in QuotiMate.',
       }));
       await res.close();
     } catch (e) {

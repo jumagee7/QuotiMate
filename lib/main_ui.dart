@@ -1,5 +1,7 @@
 // main_ui.dart â€” QuotiMate App Shell (Sidebar + Router)
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 // Pages
@@ -12,8 +14,11 @@ import 'pages/projects_page.dart';
 import 'pages/settings_page.dart';
 import 'pages/schedule_page.dart';
 import 'pages/sign_in_page.dart';
+import 'pages/alarm_acknowledged_page.dart';
 import 'services/auth_service.dart';
 import 'services/cloud_sync_service.dart';
+import 'services/notification_service.dart';
+import 'services/update_service.dart';
 import 'app_state.dart';
 import 'models.dart';
 
@@ -27,7 +32,67 @@ class QuotiMateShell extends StatefulWidget {
 class _QuotiMateShellState extends State<QuotiMateShell> {
   bool _collapsed = false;
   int _selectedNav = 0;
+  String _appVersion = '';
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+  StreamSubscription<String>? _notificationTapSub;
+
+  @override
+  void initState() {
+    super.initState();
+    // Tapping an alarm acknowledges it; other alerts open Schedule.
+    _notificationTapSub = NotificationService().onNotificationTap.listen(_handleNotificationTap);
+    final pending = NotificationService().takePendingTap();
+    if (pending != null) {
+      // A cold start reports the tap before the shell is laid out.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _handleNotificationTap(pending);
+      });
+    }
+    UpdateService().currentVersionWithBuild().then((v) {
+      if (mounted) setState(() => _appVersion = v);
+    });
+  }
+
+  @override
+  void dispose() {
+    _notificationTapSub?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _handleNotificationTap(String payload) async {
+    if (!mounted) return;
+    final parts = payload.split(':');
+    if (parts.length >= 2) {
+      final kind = parts[0];
+      final id = parts[1];
+      final isAlarm = parts.length > 2 && parts[2] == 'alarm';
+      final appState = AppStateProvider.of(context);
+      final rings = isAlarm && appState.alarmBuzzEnabled &&
+          switch (kind) {
+            'task' => appState.tasks.any((t) => t.id == id && t.alarmEnabled),
+            'event' => appState.events.any((e) => e.id == id && e.alarmEnabled),
+            _ => false,
+          };
+      if (rings) {
+        // The tap is the acknowledgement: silence the card before showing the
+        // summary. Opening the shade afterwards must not be what stops it.
+        await NotificationService().cancelReminder(id);
+        if (!mounted) return;
+        Navigator.of(context, rootNavigator: true).push(
+          MaterialPageRoute(
+            fullscreenDialog: true,
+            builder: (_) => AlarmAcknowledgedPage(
+              kind: kind,
+              itemId: id,
+              appState: appState,
+            ),
+          ),
+        );
+        return;
+      }
+    }
+    _navigateTo(6);
+  }
 
   void _navigateTo(int idx, {bool openCreate = false}) {
     setState(() => _selectedNav = idx);
@@ -83,6 +148,49 @@ class _QuotiMateShellState extends State<QuotiMateShell> {
                     // Top Bar
                     _buildTopBar(appState, isDesktop),
                     SizedBox(height: isDesktop ? 24 : 16),
+
+                    // Offline pending-writes banner
+                    AnimatedBuilder(
+                      animation: appState,
+                      builder: (context, _) {
+                        if (!appState.hasPendingOfflineWrites) return const SizedBox.shrink();
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 10),
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF1C2B1A),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: const Color(0xFFFFC107).withValues(alpha: 0.5)),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.cloud_off_rounded, color: Color(0xFFFFC107), size: 16),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  '${appState.pendingOfflineWriteCount} unsaved change${appState.pendingOfflineWriteCount == 1 ? '' : 's'} — waiting to sync when back online',
+                                  style: const TextStyle(color: Color(0xFFFFC107), fontSize: 12),
+                                ),
+                              ),
+                              GestureDetector(
+                                onTap: () async {
+                                  await appState.restartCloudSync();
+                                  appState.clearPendingOfflineWrites();
+                                },
+                                child: const Padding(
+                                  padding: EdgeInsets.symmetric(horizontal: 6),
+                                  child: Text('Sync Now',
+                                      style: TextStyle(
+                                          color: Color(0xFF10B981),
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.bold)),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
 
                     // Active Page
                     Expanded(
@@ -218,7 +326,7 @@ class _QuotiMateShellState extends State<QuotiMateShell> {
           // App Version
           const SizedBox(height: 10),
           Text(
-            'v1.0.0',
+            _appVersion.isEmpty ? 'QuotiMate' : 'v$_appVersion',
             style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.white54),
           ),
         ],

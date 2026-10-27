@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../app_state.dart';
+import '../widgets/project_card.dart';
+import '../widgets/money_text.dart';
+import '../widgets/update_banner.dart';
 import '../models.dart';
 import 'quote_editor_page.dart';
 import 'project_quickbook_page.dart';
@@ -17,6 +20,7 @@ class DashboardPage extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          const UpdateBanner(),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             decoration: BoxDecoration(
@@ -39,37 +43,23 @@ class DashboardPage extends StatelessWidget {
           const SizedBox(height: 20),
 
           // ── Projects Overview ─────────────────────────────────────────────
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              _sectionTitle(context, 'Projects & QuickBook'),
-              InkWell(
-                onTap: () => onNavigate?.call(7),
-                child: Text(
-                  state.projects.isNotEmpty ? 'View all (${state.projects.length})' : 'Explore Projects',
-                  style: const TextStyle(color: Color(0xFFFFC107), fontSize: 13, fontWeight: FontWeight.w600),
-                ),
-              ),
-            ],
+          _sectionHeader(
+            context,
+            'Projects & QuickBook',
+            actionLabel: state.projects.isNotEmpty ? 'View all (${state.projects.length})' : 'Explore Projects',
+            onTap: () => onNavigate?.call(7),
           ),
           const SizedBox(height: 12),
           _ProjectsDashboardSection(
             projects: state.projects.take(6).toList(),
+            state: state,
             onNavigate: onNavigate,
           ),
           const SizedBox(height: 20),
 
           if (state.pinnedQuotes.isNotEmpty) ...[
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                _sectionTitle(context, 'Pinned Quotations'),
-                InkWell(
-                  onTap: () => onNavigate?.call(1),
-                  child: const Text('View all', style: TextStyle(color: Color(0xFFFFC107), fontSize: 13, fontWeight: FontWeight.w600)),
-                ),
-              ],
-            ),
+            _sectionHeader(context, 'Pinned Quotations',
+                actionLabel: 'View all', onTap: () => onNavigate?.call(1)),
             const SizedBox(height: 12),
             _PinnedList(quotes: state.pinnedQuotes),
             const SizedBox(height: 24),
@@ -129,8 +119,33 @@ class DashboardPage extends StatelessWidget {
 
   Widget _sectionTitle(BuildContext ctx, String t) => Text(
     t,
+    maxLines: 1,
+    overflow: TextOverflow.ellipsis,
     style: Theme.of(ctx).textTheme.titleMedium?.copyWith(color: Colors.white),
   );
+
+  /// Header with a trailing link. The title must flex: 'Projects & QuickBook'
+  /// plus 'View all (6)' overflowed a 360dp row.
+  Widget _sectionHeader(
+    BuildContext ctx,
+    String title, {
+    required String actionLabel,
+    required VoidCallback onTap,
+  }) {
+    return Row(
+      children: [
+        Expanded(child: _sectionTitle(ctx, title)),
+        const SizedBox(width: 8),
+        InkWell(
+          onTap: onTap,
+          child: Text(
+            actionLabel,
+            style: const TextStyle(color: Color(0xFFFFC107), fontSize: 13, fontWeight: FontWeight.w600),
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 
@@ -165,18 +180,22 @@ class _KpiRow extends StatelessWidget {
 
   Widget _kpi(BuildContext ctx, String title, String value, Color? valueColor) {
     return Container(
-      padding: const EdgeInsets.all(20),
+      // A fixed height keeps all four tiles identical: Android's font metrics
+      // wrap 'QUOTATIONS THIS MONTH' onto a second line, which used to make the
+      // neighbouring card shorter.
+      height: 112,
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: const Color(0xFF161B26),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: const Color(0xFF2A3045), width: 1),
       ),
       child: Column(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(value, style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: valueColor ?? Colors.white)),
-          const SizedBox(height: 8),
-          Text(title, style: const TextStyle(color: Color(0xFF8A92A6), fontSize: 11, fontWeight: FontWeight.w600, letterSpacing: 0.8)),
+          Text(value, maxLines: 1, style: TextStyle(fontSize: 30, fontWeight: FontWeight.bold, color: valueColor ?? Colors.white)),
+          Text(title, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Color(0xFF8A92A6), fontSize: 10.5, fontWeight: FontWeight.w600, letterSpacing: 0.8, height: 1.25)),
         ],
       ),
     );
@@ -240,6 +259,7 @@ class _PinnedList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final currency = AppStateProvider.of(context).currency;
     return Column(
       children: quotes.map((q) => Padding(
         padding: const EdgeInsets.only(bottom: 12),
@@ -280,7 +300,7 @@ class _PinnedList extends StatelessWidget {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     const Text('Amount', style: TextStyle(color: Color(0xFF8A92A6), fontSize: 13)),
-                    Text('KES ${q.total.toStringAsFixed(0)}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)),
+                    MoneyText(formatAmount(q.total, currency), maxWidth: 150, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)),
                   ],
                 ),
               ],
@@ -301,6 +321,7 @@ class _RecentQuotesGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final currency = AppStateProvider.of(context).currency;
     return GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
@@ -308,7 +329,7 @@ class _RecentQuotesGrid extends StatelessWidget {
         crossAxisCount: 2,
         mainAxisSpacing: 12,
         crossAxisSpacing: 12,
-        childAspectRatio: 1.4,
+        childAspectRatio: 1.2,
       ),
       itemCount: quotes.length,
       itemBuilder: (ctx, i) {
@@ -351,21 +372,18 @@ class _RecentQuotesGrid extends StatelessWidget {
                   maxLines: 1,
                 ),
                 const Spacer(),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Flexible(
-                      child: Text(
-                        'KES ${q.total.toStringAsFixed(0)}',
-                        style: const TextStyle(color: Color(0xFFFFC107), fontWeight: FontWeight.bold, fontSize: 13),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    Text(
-                      '${q.date.day}/${q.date.month}/${q.date.year}',
-                      style: const TextStyle(color: Colors.white38, fontSize: 11),
-                    ),
-                  ],
+                // The amount gets the full card width: sharing the row with the
+                // date left no room for grouped digits on 360dp screens.
+                MoneyText(
+                  formatAmount(q.total, currency),
+                  maxWidth: double.infinity,
+                  alignment: Alignment.centerLeft,
+                  style: const TextStyle(color: Color(0xFFFFC107), fontWeight: FontWeight.bold, fontSize: 14),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  DateFormat('d MMM y').format(q.date),
+                  style: const TextStyle(color: Colors.white38, fontSize: 11),
                 ),
               ],
             ),
@@ -379,18 +397,34 @@ class _RecentQuotesGrid extends StatelessWidget {
 // â”€â”€ Activity Panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class _ActivityPanel extends StatelessWidget {
-  final List<String> activities;
+  final List<AppActivity> activities;
   const _ActivityPanel({required this.activities});
 
   @override
   Widget build(BuildContext context) {
-    // We mock the image's layout here
-    final activityData = [
-      {'color': Colors.blue, 'title': 'Quotation #Q-1021 approved', 'time': '10:45 AM'},
-      {'color': Colors.yellow, 'title': "Client 'ABC Ltd' added", 'time': '9:30 AM'},
-      {'color': Colors.green, 'title': "Product 'Industrial Motor' updated", 'time': '8:00 AM'},
-    ];
-    
+    if (activities.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: const Color(0xFF161B26),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFF2A3045), width: 1),
+        ),
+        child: const Row(
+          children: [
+            Icon(Icons.history_rounded, color: Color(0xFF8A92A6), size: 20),
+            SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'No activity yet — create a quote, invoice or project to see it here.',
+                style: TextStyle(color: Color(0xFF8A92A6), fontSize: 12),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -399,8 +433,8 @@ class _ActivityPanel extends StatelessWidget {
         border: Border.all(color: const Color(0xFF2A3045), width: 1),
       ),
       child: Column(
-        children: activityData.asMap().entries.map((e) {
-          final isLast = e.key == activityData.length - 1;
+        children: activities.asMap().entries.map((e) {
+          final isLast = e.key == activities.length - 1;
           final item = e.value;
           return Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -408,39 +442,31 @@ class _ActivityPanel extends StatelessWidget {
               Column(
                 children: [
                   Container(
-                    width: 14, height: 14,
+                    width: 22, height: 22,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: (item['color'] as Color).withValues(alpha: 0.2),
+                      color: item.color.withValues(alpha: 0.15),
                     ),
-                    child: Center(
-                      child: Container(
-                        width: 6, height: 6,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: item['color'] as Color,
-                        ),
-                      ),
-                    ),
+                    child: Icon(item.icon, size: 12, color: item.color),
                   ),
                   if (!isLast) Container(
                     width: 2,
-                    height: 40,
+                    height: 34,
                     color: const Color(0xFF2A3045),
                     margin: const EdgeInsets.only(top: 4),
                   ),
                 ],
               ),
-              const SizedBox(width: 14),
+              const SizedBox(width: 12),
               Expanded(
                 child: Padding(
                   padding: const EdgeInsets.only(top: 2),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(item['title'] as String, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500)),
-                      const SizedBox(height: 4),
-                      Text(item['time'] as String, style: const TextStyle(color: Color(0xFF8A92A6), fontSize: 11)),
+                      Text(item.title, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500)),
+                      const SizedBox(height: 3),
+                      Text(_timeAgo(item.time), style: const TextStyle(color: Color(0xFF8A92A6), fontSize: 11)),
                     ],
                   ),
                 ),
@@ -450,6 +476,15 @@ class _ActivityPanel extends StatelessWidget {
         }).toList(),
       ),
     );
+  }
+
+  String _timeAgo(DateTime dt) {
+    final diff = DateTime.now().difference(dt);
+    if (diff.inMinutes < 1) return 'Just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    if (diff.inDays < 7) return '${diff.inDays}d ago';
+    return '${dt.day}/${dt.month}/${dt.year}';
   }
 }
 
@@ -553,9 +588,10 @@ class _StatusBadge extends StatelessWidget {
 
 class _ProjectsDashboardSection extends StatelessWidget {
   final List<Project> projects;
+  final AppState state;
   final void Function(int idx, {bool openCreate})? onNavigate;
 
-  const _ProjectsDashboardSection({required this.projects, this.onNavigate});
+  const _ProjectsDashboardSection({required this.projects, required this.state, this.onNavigate});
 
   @override
   Widget build(BuildContext context) {
@@ -603,110 +639,16 @@ class _ProjectsDashboardSection extends StatelessWidget {
       );
     }
 
-    final currencyFmt = NumberFormat.currency(symbol: 'KES ', decimalDigits: 0);
-
-    return SizedBox(
-      height: 148,
-      child: ListView.builder(
-        scrollDirection: Axis.horizontal,
-        itemCount: projects.length,
-        itemBuilder: (ctx, i) {
-          final p = projects[i];
-          final profit = p.netProfitRealized();
-          return Container(
-            width: 260,
-            margin: EdgeInsets.only(right: i == projects.length - 1 ? 0 : 14),
-            decoration: BoxDecoration(
-              color: const Color(0xFF161B26),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: const Color(0xFF2A3045)),
-            ),
-            child: Material(
-              color: Colors.transparent,
-              borderRadius: BorderRadius.circular(16),
-              child: InkWell(
-                borderRadius: BorderRadius.circular(16),
-                onTap: () => openProjectQuickBookPage(ctx, projectId: p.id),
-                child: Padding(
-                  padding: const EdgeInsets.all(14),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Expanded(
-                            child: Text(
-                              p.name,
-                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: p.status.color.withValues(alpha: 0.15),
-                              borderRadius: BorderRadius.circular(6),
-                              border: Border.all(color: p.status.color.withValues(alpha: 0.5)),
-                            ),
-                            child: Text(
-                              p.status.label,
-                              style: TextStyle(color: p.status.color, fontSize: 10, fontWeight: FontWeight.bold),
-                            ),
-                          ),
-                        ],
-                      ),
-                      Row(
-                        children: [
-                          const Icon(Icons.person_outline, size: 12, color: Color(0xFF8A92A6)),
-                          const SizedBox(width: 4),
-                          Expanded(
-                            child: Text(
-                              p.clientName.isNotEmpty ? p.clientName : 'No client',
-                              style: const TextStyle(color: Color(0xFF8A92A6), fontSize: 12),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const Divider(color: Color(0xFF2A3045), height: 1),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text('BUDGET', style: TextStyle(color: Color(0xFF8A92A6), fontSize: 9, fontWeight: FontWeight.w600)),
-                              Text(currencyFmt.format(p.budget), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)),
-                            ],
-                          ),
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
-                              const Text('PROFIT', style: TextStyle(color: Color(0xFF8A92A6), fontSize: 9, fontWeight: FontWeight.w600)),
-                              Text(
-                                currencyFmt.format(profit),
-                                style: TextStyle(
-                                  color: profit >= 0 ? const Color(0xFF34D399) : Colors.redAccent,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 12,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          );
-        },
-      ),
+    return Column(
+      children: [
+        for (var i = 0; i < projects.length; i++)
+          ProjectCard(
+            project: projects[i],
+            state: state,
+            margin: EdgeInsets.only(bottom: i == projects.length - 1 ? 0 : 14),
+            onTap: () => openProjectQuickBookPage(context, projectId: projects[i].id),
+          ),
+      ],
     );
   }
 }

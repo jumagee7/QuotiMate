@@ -4,6 +4,8 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../app_state.dart';
+import '../widgets/money_text.dart';
+import '../widgets/project_card.dart';
 import '../models.dart';
 import 'project_quickbook_page.dart';
 
@@ -29,21 +31,26 @@ class _ProjectsPageState extends State<ProjectsPage> {
   ProjectStatus? _statusFilter;
   String _search = '';
   ProjectSort _sort = ProjectSort.dateDesc;
-  final _currencyFmt = NumberFormat.currency(symbol: 'KES ', decimalDigits: 0);
   final _compactFmt = NumberFormat.compact();
   final _dateFmt = DateFormat('dd MMM yyyy');
 
-  String _fmt(double val) => _currencyFmt.format(val);
-  String _fmtCompact(double val) => 'KES ${_compactFmt.format(val)}';
+  String _fmtCompact(double val, String currency) {
+    final formatted = _compactFmt.format(val);
+    return formatted.contains('.') && val.abs() < 1000
+        ? formatAmount(val, currency)
+        : '${currencyPrefix(currency)}$formatted';
+  }
 
   @override
   Widget build(BuildContext context) {
     final appState = AppStateProvider.of(context);
+    final currency = appState.currency;
 
     final filtered = appState.projects.where((p) {
       final matchStatus = _statusFilter == null || p.status == _statusFilter;
       final matchSearch = _search.isEmpty ||
           p.name.toLowerCase().contains(_search.toLowerCase()) ||
+          p.numberLabel.toLowerCase().contains(_search.toLowerCase()) ||
           p.clientName.toLowerCase().contains(_search.toLowerCase()) ||
           p.location.toLowerCase().contains(_search.toLowerCase());
       return matchStatus && matchSearch;
@@ -92,15 +99,15 @@ class _ProjectsPageState extends State<ProjectsPage> {
             children: [
               _kpi('Active Projects', '$activeProjects / $totalProjects', Icons.business_center_rounded, _gold),
               const SizedBox(width: 12),
-              _kpi('Total Invoiced', _fmtCompact(totalInvoiced), Icons.receipt_long_rounded, _blue),
+              _kpi('Total Invoiced', _fmtCompact(totalInvoiced, currency), Icons.receipt_long_rounded, _blue),
               const SizedBox(width: 12),
-              _kpi('Total Collected', _fmtCompact(totalCollected), Icons.payments_rounded, _green),
+              _kpi('Total Collected', _fmtCompact(totalCollected, currency), Icons.payments_rounded, _green),
               const SizedBox(width: 12),
-              _kpi('Project Costs', _fmtCompact(totalExpenses), Icons.shopping_bag_outlined, Colors.orange),
+              _kpi('Project Costs', _fmtCompact(totalExpenses, currency), Icons.shopping_bag_outlined, Colors.orange),
               const SizedBox(width: 12),
               _kpi(
                 'Net Profit',
-                _fmtCompact(totalNetProfit),
+                _fmtCompact(totalNetProfit, currency),
                 totalNetProfit >= 0 ? Icons.trending_up_rounded : Icons.trending_down_rounded,
                 totalNetProfit >= 0 ? _green : _red,
                 subtitle: '${overallMargin.toStringAsFixed(1)}% margin',
@@ -331,258 +338,16 @@ class _ProjectsPageState extends State<ProjectsPage> {
   }
 
   Widget _buildProjectCard(BuildContext context, AppState appState, Project project) {
-    final totalInvoiced = project.totalInvoiced(appState.invoices);
-    final totalQuoted = project.totalQuoted(appState.quotes);
-    final totalPaid = project.totalPaymentsReceived;
-    final totalExpenses = project.totalExpenses;
-    final netProfit = project.netProfitRealized();
-    final profitMargin = project.profitMarginRealized();
-    final balance = project.outstandingBalance(appState.invoices, appState.quotes);
-
-    final targetVal = totalInvoiced > 0 ? totalInvoiced : (totalQuoted > 0 ? totalQuoted : project.budget);
-    final collectionPct = targetVal > 0 ? (totalPaid / targetVal).clamp(0.0, 1.0) : 0.0;
-    final isProfit = netProfit >= 0;
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 14),
-      decoration: BoxDecoration(
-        color: _surface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _border),
-      ),
-      child: Material(
-        color: Colors.transparent,
-        borderRadius: BorderRadius.circular(14),
-        child: InkWell(
-          onTap: () => openProjectQuickBookPage(context, projectId: project.id),
-          borderRadius: BorderRadius.circular(14),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Header: Project Name, Client, Status Pill
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Flexible(
-                                child: Text(
-                                  project.name,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              _statusBadge(project.status),
-                            ],
-                          ),
-                          const SizedBox(height: 4),
-                          Row(
-                            children: [
-                              const Icon(Icons.person_outline_rounded, color: _gold, size: 14),
-                              const SizedBox(width: 4),
-                              Text(
-                                project.clientName,
-                                style: const TextStyle(color: _white70, fontSize: 13, fontWeight: FontWeight.w500),
-                              ),
-                              if (project.location.isNotEmpty) ...[
-                                const SizedBox(width: 10),
-                                const Icon(Icons.location_on_outlined, color: _white38, size: 14),
-                                const SizedBox(width: 2),
-                                Text(project.location, style: const TextStyle(color: _white38, fontSize: 12)),
-                              ],
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                    // QuickBook Pill Button
-                    ElevatedButton.icon(
-                      onPressed: () => openProjectQuickBookPage(context, projectId: project.id),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _gold.withValues(alpha: 0.15),
-                        foregroundColor: _gold,
-                        side: const BorderSide(color: _gold),
-                        elevation: 0,
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                      ),
-                      icon: const Icon(Icons.auto_stories_rounded, size: 15),
-                      label: const Text('QuickBook', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 14),
-
-                // Financial Overview Bar / Cards
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF0F162C),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: _border),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceAround,
-                    children: [
-                      _miniFinancial(
-                        'Total Value',
-                        _fmt(targetVal),
-                        _white70,
-                      ),
-                      _divider(),
-                      _miniFinancial(
-                        'Collected',
-                        _fmt(totalPaid),
-                        _green,
-                      ),
-                      _divider(),
-                      _miniFinancial(
-                        'Costs / Bought',
-                        _fmt(totalExpenses),
-                        _gold,
-                      ),
-                      _divider(),
-                      _miniFinancial(
-                        'Net Profit',
-                        _fmt(netProfit),
-                        isProfit ? _green : _red,
-                        tag: '${profitMargin.toStringAsFixed(0)}%',
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12),
-
-                // Cash Collection Progress Bar
-                Row(
-                  children: [
-                    Expanded(
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(4),
-                        child: LinearProgressIndicator(
-                          value: collectionPct,
-                          backgroundColor: const Color(0xFF0F162C),
-                          valueColor: AlwaysStoppedAnimation(
-                            collectionPct >= 1.0 ? _green : (collectionPct > 0.5 ? _blue : Colors.orange),
-                          ),
-                          minHeight: 6,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Text(
-                      '${(collectionPct * 100).toStringAsFixed(0)}% collected',
-                      style: const TextStyle(color: _white38, fontSize: 11, fontWeight: FontWeight.bold),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-
-                // Counts & Date Footer
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Row(
-                      children: [
-                        _countPill(Icons.article_outlined, '${project.quoteIds.length} Quotes'),
-                        const SizedBox(width: 8),
-                        _countPill(Icons.receipt_long_outlined, '${project.invoiceIds.length} Invoices'),
-                        const SizedBox(width: 8),
-                        _countPill(Icons.shopping_bag_outlined, '${project.expenses.length} Purchases'),
-                      ],
-                    ),
-                    Text(
-                      'Started: ${_dateFmt.format(project.startDate)}',
-                      style: const TextStyle(color: _white38, fontSize: 11),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
+    return ProjectCard(
+      project: project,
+      state: appState,
+      onTap: () => openProjectQuickBookPage(context, projectId: project.id),
     );
   }
 
-  Widget _miniFinancial(String label, String value, Color color, {String? tag}) {
-    return Column(
-      children: [
-        Text(label, style: const TextStyle(color: _white38, fontSize: 10)),
-        const SizedBox(height: 2),
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(value, style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.bold)),
-            if (tag != null) ...[
-              const SizedBox(width: 4),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                decoration: BoxDecoration(color: color.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(4)),
-                child: Text(tag, style: TextStyle(color: color, fontSize: 9, fontWeight: FontWeight.bold)),
-              ),
-            ],
-          ],
-        ),
-      ],
-    );
-  }
 
-  Widget _divider() {
-    return Container(height: 24, width: 1, color: _border);
-  }
 
-  Widget _countPill(IconData icon, String text) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: const Color(0xFF0F162C),
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: _border),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, color: _white70, size: 12),
-          const SizedBox(width: 4),
-          Text(text, style: const TextStyle(color: _white70, fontSize: 11)),
-        ],
-      ),
-    );
-  }
 
-  Widget _statusBadge(ProjectStatus status) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-      decoration: BoxDecoration(
-        color: status.color.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: status.color),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(status.icon, color: status.color, size: 11),
-          const SizedBox(width: 4),
-          Text(
-            status.label,
-            style: TextStyle(color: status.color, fontSize: 10, fontWeight: FontWeight.bold),
-          ),
-        ],
-      ),
-    );
-  }
 
   // ── Project Creation Dialog ────────────────────────────────────────────────
 
@@ -750,14 +515,16 @@ class _ProjectsPageState extends State<ProjectsPage> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text('Estimated Budget (KES)', style: TextStyle(color: _white70, fontSize: 12)),
+                            Text('Estimated Budget (${appState.currency})',
+                                style: const TextStyle(color: _white70, fontSize: 12)),
                             const SizedBox(height: 6),
                             TextField(
                               controller: budgetCtrl,
                               keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                              inputFormatters: moneyInputFormatters(),
                               style: const TextStyle(color: Colors.white),
                               decoration: InputDecoration(
-                                prefixText: 'KES ',
+                                prefixText: currencyPrefix(appState.currency),
                                 filled: true,
                                 fillColor: const Color(0xFF0F162C),
                                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: _border)),
@@ -906,13 +673,14 @@ class _ProjectsPageState extends State<ProjectsPage> {
 
                 final newProject = Project(
                   id: appState.nextProjectId,
+                  number: appState.nextProjectNumber,
                   name: name,
                   clientId: finalClientId,
                   clientName: finalClientName,
                   status: status,
                   startDate: startDate,
                   deadline: deadline,
-                  budget: double.tryParse(budgetCtrl.text.trim()) ?? 0.0,
+                  budget: parseMoney(budgetCtrl.text) ?? 0.0,
                   location: locationCtrl.text.trim(),
                   description: descCtrl.text.trim(),
                 );

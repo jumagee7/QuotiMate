@@ -3,17 +3,21 @@
 import "package:intl/intl.dart";
 import "../models.dart";
 import "../app_state.dart";
+import "app_env.dart";
 
 /// Generates a self-contained HTML file the client can open in any browser.
 /// Includes the full quotation/invoice layout + a JavaScript signature pad.
 /// The client can approve, sign, and download the signed confirmation.
 class HtmlReviewService {
-  static final _fmt = NumberFormat.currency(symbol: "KES ", decimalDigits: 0);
   static final _dateFmt = DateFormat("dd MMM yyyy");
+
+  static NumberFormat _fmtFor(AppState state) =>
+      NumberFormat.currency(symbol: "${state.currency} ", decimalDigits: 0);
 
   static String generateQuoteHtml(Quote quote, AppState state, {String? serverUrl}) {
     final items = _buildItemsTable(quote.categories, quote.total, quote.subtotal,
-        quote.categoryLabourCost, quote.labourCost, quote.tax, quote.vatPercent);
+        quote.categoryLabourCost, quote.labourCost, quote.tax, quote.vatPercent,
+        _fmtFor(state));
     final expiry = _dateFmt.format(quote.expiryDate);
     final date = _dateFmt.format(quote.date);
 
@@ -21,6 +25,7 @@ class HtmlReviewService {
       docType: "Quotation",
       docId: quote.id,
       clientName: quote.clientName,
+      clientPhone: _clientPhone(quote.clientId, state),
       date: date,
       expiryOrDue: "Expiry: $expiry",
       status: quote.status.label,
@@ -36,7 +41,8 @@ class HtmlReviewService {
 
   static String generateInvoiceHtml(Invoice invoice, AppState state, {String? serverUrl}) {
     final items = _buildItemsTable(invoice.categories, invoice.total, invoice.subtotal,
-        invoice.categoryLabourCost, invoice.labourCost, invoice.tax, 16.0);
+        invoice.categoryLabourCost, invoice.labourCost, invoice.tax, 16.0,
+        _fmtFor(state));
     final due = _dateFmt.format(invoice.dueDate);
     final date = _dateFmt.format(invoice.date);
 
@@ -44,6 +50,7 @@ class HtmlReviewService {
       docType: "Invoice",
       docId: invoice.id,
       clientName: invoice.clientName,
+      clientPhone: _clientPhone(invoice.clientId, state),
       date: date,
       expiryOrDue: "Due: $due",
       status: invoice.status.label,
@@ -55,6 +62,13 @@ class HtmlReviewService {
       notes: invoice.notes,
       serverUrl: serverUrl,
     );
+  }
+
+  static String _clientPhone(String clientId, AppState state) {
+    for (final c in state.clients) {
+      if (c.id == clientId) return c.phone;
+    }
+    return "";
   }
 
   static String _statusColor(String status) {
@@ -75,6 +89,7 @@ class HtmlReviewService {
     double labour,
     double tax,
     double vatPercent,
+    NumberFormat fmt,
   ) {
     final sb = StringBuffer();
     for (final cat in categories) {
@@ -83,35 +98,35 @@ class HtmlReviewService {
         sb.writeln("""<tr>
           <td>${_esc(item.name)}</td>
           <td style=\'text-align:center\'>${item.qty.toStringAsFixed(0)} ${item.unit}</td>
-          <td style=\'text-align:right\'>${_fmt.format(item.unitPrice)}</td>
-          <td style=\'text-align:right;font-weight:600\'>${_fmt.format(item.total)}</td>
+          <td style=\'text-align:right\'>${fmt.format(item.unitPrice)}</td>
+          <td style=\'text-align:right;font-weight:600\'>${fmt.format(item.total)}</td>
         </tr>""");
       }
       if (cat.labourCost > 0) {
         sb.writeln("""<tr class=\'labour-row\'>
           <td colspan=\'3\'>Labour (${cat.name})</td>
-          <td style=\'text-align:right\'>${_fmt.format(cat.labourCost)}</td>
+          <td style=\'text-align:right\'>${fmt.format(cat.labourCost)}</td>
         </tr>""");
       }
     }
     // Totals
     sb.writeln("""<tr class=\'total-row subtotal-row\'>
-      <td colspan=\'3\'>Subtotal</td><td style=\'text-align:right\'>${_fmt.format(subtotal)}</td>
+      <td colspan=\'3\'>Subtotal</td><td style=\'text-align:right\'>${fmt.format(subtotal)}</td>
     </tr>""");
     if (labour > 0) {
       sb.writeln("""<tr class=\'total-row\'>
-        <td colspan=\'3\'>Labour</td><td style=\'text-align:right\'>${_fmt.format(labour)}</td>
+        <td colspan=\'3\'>Labour</td><td style=\'text-align:right\'>${fmt.format(labour)}</td>
       </tr>""");
     }
     if (vatPercent > 0) {
       sb.writeln("""<tr class=\'total-row\'>
         <td colspan=\'3\'>VAT (${vatPercent.toStringAsFixed(0)}%)</td>
-        <td style=\'text-align:right\'>${_fmt.format(tax)}</td>
+        <td style=\'text-align:right\'>${fmt.format(tax)}</td>
       </tr>""");
     }
     sb.writeln("""<tr class=\'total-row grand-total\'>
       <td colspan=\'3\'><strong>TOTAL</strong></td>
-      <td style=\'text-align:right\'><strong>${_fmt.format(total)}</strong></td>
+      <td style=\'text-align:right\'><strong>${fmt.format(total)}</strong></td>
     </tr>""");
     return sb.toString();
   }
@@ -126,6 +141,7 @@ class HtmlReviewService {
     required String docType,
     required String docId,
     required String clientName,
+    String clientPhone = "",
     required String date,
     required String expiryOrDue,
     required String status,
@@ -138,6 +154,8 @@ class HtmlReviewService {
     String? serverUrl,
   }) {
     final configuredServerUrl = serverUrl ?? "";
+    final firebaseApiKey = AppEnv.firebaseApiKey;
+    final firebaseProjectId = AppEnv.firebaseProjectId;
 
     return """<!DOCTYPE html>
 <html lang="en">
@@ -173,6 +191,11 @@ class HtmlReviewService {
   .sig-section h2 { font-size: 20px; font-weight: 800; color: #1E2733; margin-bottom: 8px; }
   .sig-section p { color: #64748b; font-size: 14px; margin-bottom: 16px; }
   #sig-canvas { border: 2px solid #94a3b8; border-radius: 10px; cursor: crosshair; background: #ffffff; touch-action: none; display: block; width: 100%; max-width: 520px; height: 160px; box-shadow: inset 0 2px 4px rgba(0,0,0,0.05); }
+  .signer-grid { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 18px; }
+  .signer-grid label { flex: 1 1 220px; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #64748b; font-weight: 700; }
+  .signer-grid input { display: block; width: 100%; margin-top: 6px; padding: 12px 14px; font-size: 15px; font-weight: 600; color: #0f172a; border: 2px solid #cbd5e1; border-radius: 8px; background: #fff; text-transform: none; letter-spacing: 0; }
+  .signer-grid input:focus { outline: none; border-color: #E7C67B; }
+  .signer-hint { font-size: 12px; color: #64748b; margin: -8px 0 18px; text-transform: none; letter-spacing: 0; font-weight: 400; }
   .sig-actions { margin-top: 14px; display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
   button { padding: 12px 24px; border-radius: 8px; font-size: 14px; font-weight: 700; cursor: pointer; border: none; transition: all 0.2s; }
   button:hover { opacity: 0.9; }
@@ -218,7 +241,16 @@ class HtmlReviewService {
     <!-- Signature Section -->
     <div class="sig-section">
       <h2>✍️ Digital Acceptance & Signature</h2>
-      <p>Please review the above $docType. If everything is satisfactory, sign inside the box below and click <strong>Approve & Sign Document</strong>.</p>
+      <p>Please review the above $docType. If everything is satisfactory, confirm who is signing, sign inside the box below and click <strong>Approve & Sign Document</strong>.</p>
+      <div class="signer-grid">
+        <label>Full name of signer
+          <input id="signer-name" type="text" autocomplete="name" placeholder="Who is approving this?" value="${_esc(clientName)}">
+        </label>
+        <label>WhatsApp number
+          <input id="signer-phone" type="tel" autocomplete="tel" placeholder="+2547..." value="${_esc(clientPhone)}">
+        </label>
+      </div>
+      <p class="signer-hint">We also record the signing device and time so this acceptance is verifiable later.</p>
       <canvas id="sig-canvas" width="520" height="160"></canvas>
       <div class="sig-actions">
         <button id="clear-btn" onclick="clearSig()">Clear Signature</button>
@@ -226,7 +258,7 @@ class HtmlReviewService {
       </div>
       <div class="success-box" id="success-box">
         <h3>✅ Document Approved & Signed!</h3>
-        <p>Thank you, <strong>$clientName</strong>. Your signature has been recorded.</p>
+        <p>Thank you, <strong id="success-signer">$clientName</strong>. Your signature has been recorded.</p>
         <div class="sync-feedback" id="sync-feedback">Connecting to QuotiMate...</div>
         <div class="success-btns">
           <button id="download-btn" onclick="downloadSigned()">⬇ Download Signed Certificate</button>
@@ -252,6 +284,7 @@ const ctx = canvas.getContext("2d");
 let drawing = false, hasSig = false;
 let lastX = 0, lastY = 0;
 let signedDataUrl = null;
+let lastSignaturePayload = null;
 
 function getPos(e) {
   const r = canvas.getBoundingClientRect();
@@ -270,7 +303,7 @@ canvas.addEventListener("mousemove", e => {
   ctx.beginPath(); ctx.moveTo(lastX, lastY); ctx.lineTo(p.x, p.y);
   ctx.strokeStyle = "#0f172a"; ctx.lineWidth = 2.5; ctx.lineCap = "round"; ctx.stroke();
   lastX = p.x; lastY = p.y; hasSig = true;
-  document.getElementById("approve-btn").disabled = false;
+  refreshApproveBtn();
 });
 canvas.addEventListener("mouseup", () => drawing = false);
 canvas.addEventListener("mouseleave", () => drawing = false);
@@ -286,7 +319,7 @@ canvas.addEventListener("touchmove", e => {
   ctx.beginPath(); ctx.moveTo(lastX, lastY); ctx.lineTo(p.x, p.y);
   ctx.strokeStyle = "#0f172a"; ctx.lineWidth = 2.5; ctx.lineCap = "round"; ctx.stroke();
   lastX = p.x; lastY = p.y; hasSig = true;
-  document.getElementById("approve-btn").disabled = false;
+  refreshApproveBtn();
 }, { passive: false });
 
 canvas.addEventListener("touchend", () => drawing = false);
@@ -294,13 +327,92 @@ canvas.addEventListener("touchend", () => drawing = false);
 function clearSig() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   hasSig = false;
-  document.getElementById("approve-btn").disabled = true;
+  refreshApproveBtn();
   document.getElementById("success-box").style.display = "none";
 }
 
+function refreshApproveBtn() {
+  const btn = document.getElementById("approve-btn");
+  btn.disabled = !(hasSig && signerNameValue().length >= 2);
+}
+
+function signerNameValue() {
+  const el = document.getElementById("signer-name");
+  return el ? (el.value || "").trim() : "";
+}
+
+function signerPhoneValue() {
+  const el = document.getElementById("signer-phone");
+  return el ? (el.value || "").trim() : "";
+}
+
+document.getElementById("signer-name").addEventListener("input", refreshApproveBtn);
+document.getElementById("signer-phone").addEventListener("input", refreshApproveBtn);
+
+// The page is served by the app itself, so its own origin is the most reliable
+// callback address; the IP baked into the link is only a fallback.
+const pageOrigin = /^https?:\\/\\//.test(window.location.origin || "") ? window.location.origin : null;
+const localTargets = [];
+if (pageOrigin) localTargets.push(pageOrigin);
+if (configuredServer && localTargets.indexOf(configuredServer) === -1) localTargets.push(configuredServer);
+
+function fetchWithTimeout(url, options, ms) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), ms);
+  return fetch(url, Object.assign({ signal: ctl.signal }, options))
+    .then(res => { clearTimeout(timer); return res; })
+    .catch(err => { clearTimeout(timer); console.warn("QuotiMate transport notice:", err && err.message); return null; });
+}
+
+function browserName(ua) {
+  if (/Edg\\//i.test(ua)) return "Edge";
+  if (/OPR\\//i.test(ua)) return "Opera";
+  if (/Firefox\\//i.test(ua)) return "Firefox";
+  if (/Chrome\\//i.test(ua)) return "Chrome";
+  if (/Safari\\//i.test(ua)) return "Safari";
+  return "Browser";
+}
+
+function osName(ua) {
+  if (/Android/i.test(ua)) return "Android";
+  if (/iPhone|iPad|iPod/i.test(ua)) return "iOS";
+  if (/Windows/i.test(ua)) return "Windows";
+  if (/Mac OS X/i.test(ua)) return "macOS";
+  if (/Linux/i.test(ua)) return "Linux";
+  return "Unknown device";
+}
+
+function collectEvidence() {
+  const ua = navigator.userAgent || "";
+  return {
+    signerName: signerNameValue(),
+    signerPhone: signerPhoneValue(),
+    signerDevice: osName(ua) + " - " + browserName(ua) + " (" + ua.substring(0, 90) + ")",
+    signerAppVersion: "QuotiMate Web Review - " + screen.width + "x" + screen.height + " " + (navigator.language || ""),
+    signerLocation: "Not shared"
+  };
+}
+
+function locate(evidence) {
+  return new Promise(resolve => {
+    let settled = false;
+    const finish = value => { if (!settled) { settled = true; evidence.signerLocation = value; resolve(); } };
+    if (!navigator.geolocation) return finish("Not shared");
+    setTimeout(() => finish("Not shared"), 3000);
+    navigator.geolocation.getCurrentPosition(
+      pos => finish(pos.coords.latitude.toFixed(5) + ", " + pos.coords.longitude.toFixed(5)),
+      () => finish("Not shared"),
+      { timeout: 3000, maximumAge: 600000, enableHighAccuracy: false }
+    );
+  });
+}
+
 async function approveSig() {
-  if (!hasSig) return;
   const approveBtn = document.getElementById("approve-btn");
+  if (!hasSig || signerNameValue().length < 2) {
+    document.getElementById("signer-name").focus();
+    return;
+  }
   approveBtn.disabled = true;
   approveBtn.innerText = "Transmitting Signature...";
 
@@ -308,32 +420,43 @@ async function approveSig() {
   const base64Data = signedDataUrl.replace(/^data:image\\/png;base64,/, "");
   const nowIso = new Date().toISOString();
 
+  const evidence = collectEvidence();
+  await locate(evidence);
+
   let sentToCloud = false;
   let sentToLocal = false;
 
-  // 1. Send to Firebase Firestore REST API
-  try {
+  // 1. Send to Firebase Firestore REST API (only when a Web API key was
+  //    supplied at build time; otherwise the local server is the delivery path)
+  if (!firebaseApiKey) {
+    console.warn("Cloud sync skipped: FIREBASE_API_KEY not configured at build time.");
+  } else try {
     const colName = isQuote ? "quotimate_quotes" : "quotimate_invoices";
-    const apiKey = "AIzaSyCpwFl0YHaE0NChko6YUeL7ZbC8AU1Nt7o";
-    const firestoreUrl = "https://firestore.googleapis.com/v1/projects/quotimate-cloud/databases/(default)/documents/" + colName + "/" + encodeURIComponent(docId) + "?updateMask.fieldPaths=signatureData&updateMask.fieldPaths=signedAt&updateMask.fieldPaths=status&key=" + apiKey;
+    const apiKey = "$firebaseApiKey";
+    const fields = ["signatureData","signedAt","status","signerName","signerPhone","signerDevice","signerAppVersion","signerLocation"];
+    const mask = fields.map(f => "updateMask.fieldPaths=" + f).join("&");
+    const firestoreUrl = "https://firestore.googleapis.com/v1/projects/$firebaseProjectId/databases/(default)/documents/" + colName + "/" + encodeURIComponent(docId) + "?" + mask + "&key=" + apiKey;
 
-    const payload = {
-      fields: {
-        signatureData: { stringValue: base64Data },
-        signedAt: { stringValue: nowIso },
-        status: { stringValue: "approved" }
-      }
-    };
+    const payload = { fields: {
+      signatureData: { stringValue: base64Data },
+      signedAt: { stringValue: nowIso },
+      status: { stringValue: "approved" },
+      signerName: { stringValue: evidence.signerName },
+      signerPhone: { stringValue: evidence.signerPhone },
+      signerDevice: { stringValue: evidence.signerDevice },
+      signerAppVersion: { stringValue: evidence.signerAppVersion },
+      signerLocation: { stringValue: evidence.signerLocation }
+    }};
 
-    const res = await fetch(firestoreUrl, {
+    const res = await fetchWithTimeout(firestoreUrl, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
-    });
-    if (res.ok) {
+    }, 8000);
+    if (res && res.ok) {
       sentToCloud = true;
       console.log("Firestore signature updated successfully.");
-    } else {
+    } else if (res) {
       console.warn("Firestore returned status", res.status);
     }
   } catch (err) {
@@ -341,25 +464,22 @@ async function approveSig() {
   }
 
   // 2. Send to local QuotiMate HTTP server if available
-  const localTarget = configuredServer || (window.location.origin && window.location.origin.startsWith("http") ? window.location.origin : null);
-  if (localTarget) {
-    try {
-      const res = await fetch(localTarget + "/api/sign", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          docId: docId,
-          docType: docType,
-          signatureData: base64Data,
-          signedAt: nowIso
-        })
-      });
-      if (res.ok) {
-        sentToLocal = true;
-        console.log("Local server signature updated successfully.");
-      }
-    } catch (err) {
-      console.warn("Local server notice:", err);
+  for (const target of localTargets) {
+    const res = await fetchWithTimeout(target + "/api/sign", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(Object.assign({
+        docId: docId,
+        docType: docType,
+        signatureData: base64Data,
+        signedAt: nowIso
+      }, evidence))
+    }, 6000);
+    if (res && res.ok) {
+      let applied = true;
+      try { const json = await res.json(); applied = json.applied !== false; } catch (err) { applied = true; }
+      sentToLocal = applied;
+      if (applied) { console.log("Local server signature updated successfully."); break; }
     }
   }
 
@@ -367,6 +487,8 @@ async function approveSig() {
   const successBox = document.getElementById("success-box");
   const syncMsg = document.getElementById("sync-feedback");
   const badge = document.getElementById("doc-status-badge");
+  const signerLabel = document.getElementById("success-signer");
+  if (signerLabel) signerLabel.innerText = evidence.signerName;
   if (badge) {
     badge.innerText = "Approved";
     badge.style.background = "#10b98122";
@@ -374,27 +496,28 @@ async function approveSig() {
     badge.style.borderColor = "#10b981";
   }
 
-  if (sentToCloud || sentToLocal) {
-    syncMsg.innerHTML = '<span style="color:#15803d;font-weight:700">✓ Transmitted & saved in QuotiMate app!</span> The document in QuotiMate now shows your signature.';
+  if (sentToLocal) {
+    syncMsg.innerHTML = '<span style="color:#15803d;font-weight:700">✓ Delivered to QuotiMate!</span> The app has your signature and signing details.';
+  } else if (sentToCloud) {
+    syncMsg.innerHTML = '<span style="color:#15803d;font-weight:700">✓ Saved to the cloud.</span> QuotiMate picks it up the moment the app reconnects.';
   } else {
-    syncMsg.innerHTML = '<span style="color:#b45309;font-weight:700">✓ Signed locally!</span> If you are offline, you can download your signed certificate or share the verification code.';
+    syncMsg.innerHTML = '<span style="color:#b45309;font-weight:700">✓ Signed locally!</span> QuotiMate could not be reached from this device, so please download your signed certificate or share the verification code.';
   }
 
   successBox.style.display = "block";
   approveBtn.innerText = "Approved & Signed ✓";
   successBox.scrollIntoView({ behavior: "smooth" });
+  lastSignaturePayload = Object.assign({
+    docId: docId,
+    docType: docType,
+    signedAt: nowIso,
+    signatureData: base64Data
+  }, evidence);
 }
 
 function copySigCode() {
-  if (!signedDataUrl) return;
-  const base64Data = signedDataUrl.replace(/^data:image\\/png;base64,/, "");
-  const payload = JSON.stringify({
-    docId: docId,
-    docType: docType,
-    signedAt: new Date().toISOString(),
-    signatureData: base64Data
-  });
-  navigator.clipboard.writeText(payload).then(() => {
+  if (!lastSignaturePayload) return;
+  navigator.clipboard.writeText(JSON.stringify(lastSignaturePayload)).then(() => {
     const el = document.getElementById("copy-feedback");
     el.style.display = "block";
     setTimeout(() => { el.style.display = "none"; }, 3500);
@@ -403,7 +526,9 @@ function copySigCode() {
 
 function downloadSigned() {
   const w = window.open("", "_blank");
-  const now = new Date().toLocaleString();
+  const s = lastSignaturePayload || {};
+  const signer = s.signerName || clientName;
+  const now = s.signedAt ? new Date(s.signedAt).toLocaleString() : new Date().toLocaleString();
   w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
     <title>Signed Certificate - \${docType} \${docId}</title>
     <style>body{font-family:sans-serif;max-width:720px;margin:32px auto;padding:24px;color:#1e293b;}
@@ -417,12 +542,15 @@ function downloadSigned() {
     <h2>\${docType} #\${docId}</h2>
     <p><strong>Client:</strong> \${clientName}</p>
     <p><strong>Issued by:</strong> \${companyName}</p>
+    <p><strong>Signed by:</strong> \${signer}</p>
+    <p><strong>WhatsApp:</strong> \${s.signerPhone || "Not provided"}</p>
     <p><strong>Signed on:</strong> \${now}</p>
     <hr style="margin:20px 0;border:0;border-top:1px solid #e2e8f0;">
     <h3>Client Signature</h3>
     <img class="sig-img" src="\${signedDataUrl}" alt="Signature">
-    <p><strong>\${clientName}</strong></p>
-    <div class="legal">This document has been digitally reviewed, accepted, and signed by \${clientName} on \${now}.
+    <p><strong>\${signer}</strong></p>
+    <div class="legal">This document has been digitally reviewed, accepted, and signed by \${signer} on \${now}.
+    Signing device: \${s.signerDevice || "Not captured"} | App: \${s.signerAppVersion || "Not captured"} | Location: \${s.signerLocation || "Not shared"}.
     This signature constitutes binding acceptance of the terms and pricing contained in \${docType} \${docId}.</div>
     </body></html>`);
   w.document.close();

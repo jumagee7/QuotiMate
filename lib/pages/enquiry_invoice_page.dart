@@ -1,10 +1,12 @@
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
 import '../app_state.dart';
 import '../models.dart';
 import '../services/pdf_service.dart';
+import '../widgets/money_text.dart';
 import 'pdf_viewer_page.dart';
 
 // ─── Entry point ──────────────────────────────────────────────────────────────
@@ -64,10 +66,11 @@ class _EnquiryInvoicePageState extends State<EnquiryInvoicePage> {
     text: '1. Terms Inclusive of VAT where applicable\n2. Quotation valid for 7 days'
   );
 
-  final _fmt = NumberFormat('#,##0.00', 'en_KE');
+  NumberFormat get _fmt =>
+      NumberFormat.currency(symbol: '${widget.appState.currency} ', decimalDigits: 2);
 
-  double get _agreedTotal   => double.tryParse(_agreedTotalCtrl.text) ?? 0;
-  double get _requestAmount => double.tryParse(_requestAmountCtrl.text) ?? 0;
+  double get _agreedTotal   => parseMoney(_agreedTotalCtrl.text) ?? 0;
+  double get _requestAmount => parseMoney(_requestAmountCtrl.text) ?? 0;
   double get _grandTotal    => _requestAmount > 0 ? _requestAmount : _agreedTotal;
   double get _calculatedTotal => _categories.fold(0.0, (sum, cat) => sum + cat.subtotal + cat.labourCost);
 
@@ -241,7 +244,7 @@ class _EnquiryInvoicePageState extends State<EnquiryInvoicePage> {
             margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
             decoration: BoxDecoration(color: _gold.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(20)),
-            child: Text(_grandTotal > 0 ? 'Total: KES ${_fmt.format(_grandTotal)}' : 'Fill in amounts',
+            child: Text(_grandTotal > 0 ? 'Total: ${_fmt.format(_grandTotal)}' : 'Fill in amounts',
               style: const TextStyle(color: _gold, fontWeight: FontWeight.bold, fontSize: 13)),
           ),
         ],
@@ -330,12 +333,13 @@ class _EnquiryInvoicePageState extends State<EnquiryInvoicePage> {
                   const SizedBox(width: 12),
                   Expanded(
                     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      const Text('AGREED TOTAL (KES)', style: TextStyle(color: _white38, fontSize: 10, fontWeight: FontWeight.w600, letterSpacing: 0.8)),
+                      Text('AGREED TOTAL (${widget.appState.currency})', style: TextStyle(color: _white38, fontSize: 10, fontWeight: FontWeight.w600, letterSpacing: 0.8)),
                       const SizedBox(height: 6),
                       TextField(
                         controller: _agreedTotalCtrl,
                         style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
                         keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        inputFormatters: moneyInputFormatters(decimalDigits: 2),
                         decoration: _dec('0.00'),
                         onChanged: _onAgreedTotalChanged,
                       ),
@@ -343,7 +347,7 @@ class _EnquiryInvoicePageState extends State<EnquiryInvoicePage> {
                   ),
                 ]),
                 const SizedBox(height: 8),
-                Text('Calculated from items: KES ${_fmt.format(_calculatedTotal)}', style: const TextStyle(color: _white70, fontSize: 12)),
+                Text('Calculated from items: ${_fmt.format(_calculatedTotal)}', style: const TextStyle(color: _white70, fontSize: 12)),
               ]),
 
               const SizedBox(height: 16),
@@ -417,10 +421,11 @@ class _EnquiryInvoicePageState extends State<EnquiryInvoicePage> {
                 ]),
                 const SizedBox(height: 12),
                 _labelField(
-                  'REQUEST AMOUNT (KES)',
+                  'REQUEST AMOUNT (${widget.appState.currency})',
                   _requestAmountCtrl,
                   '0.00',
                   type: const TextInputType.numberWithOptions(decimal: true),
+                  inputFormatters: moneyInputFormatters(decimalDigits: 2),
                   onChanged: _onRequestAmountChanged,
                 ),
 
@@ -440,12 +445,12 @@ class _EnquiryInvoicePageState extends State<EnquiryInvoicePage> {
                           const Text('Invoice Total Requested', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
                           if (_agreedTotal > 0 && _requestAmount > 0)
                             Text(
-                              '${((_requestAmount / _agreedTotal) * 100).toStringAsFixed(1)}% of agreed KES ${_fmt.format(_agreedTotal)}',
+                              '${((_requestAmount / _agreedTotal) * 100).toStringAsFixed(1)}% of agreed ${_fmt.format(_agreedTotal)}',
                               style: const TextStyle(color: _white70, fontSize: 11),
                             ),
                         ],
                       ),
-                      Text('KES ${_fmt.format(_grandTotal)}', style: const TextStyle(color: _gold, fontWeight: FontWeight.bold, fontSize: 20)),
+                      Text(_fmt.format(_grandTotal), style: const TextStyle(color: _gold, fontWeight: FontWeight.bold, fontSize: 20)),
                     ]),
                   ),
                 ],
@@ -529,7 +534,7 @@ class _EnquiryInvoicePageState extends State<EnquiryInvoicePage> {
     );
   }
 
-  Widget _labelField(String label, TextEditingController ctrl, String hint, {TextInputType? type, int maxLines = 1, ValueChanged<String>? onChanged}) {
+  Widget _labelField(String label, TextEditingController ctrl, String hint, {TextInputType? type, int maxLines = 1, ValueChanged<String>? onChanged, List<TextInputFormatter>? inputFormatters}) {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Text(label, style: const TextStyle(color: _white38, fontSize: 10, fontWeight: FontWeight.w600, letterSpacing: 0.8)),
       const SizedBox(height: 6),
@@ -538,6 +543,7 @@ class _EnquiryInvoicePageState extends State<EnquiryInvoicePage> {
         style: const TextStyle(color: Colors.white),
         keyboardType: type,
         maxLines: maxLines,
+        inputFormatters: inputFormatters,
         decoration: _dec(hint),
         onChanged: onChanged,
       ),

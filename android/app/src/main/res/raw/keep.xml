@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The notification small icon is resolved by name at runtime (native
+     getIdentifier), so resource shrinking treats it as unused and strips it
+     from release builds. Losing it makes initialize() fail and every alert
+     (including background alarms) silently stop posting. -->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@drawable/ic_notification,@drawable/splash_logo" />

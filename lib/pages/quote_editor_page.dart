@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'dart:convert';
 import 'dart:io';
-import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
@@ -12,6 +11,7 @@ import '../app_state.dart';
 import '../models.dart';
 import '../services/pdf_service.dart';
 import '../services/groq_service.dart';
+import '../widgets/money_text.dart';
 import 'pdf_viewer_page.dart';
 
 // Entry point — call this instead of showDialog
@@ -56,8 +56,8 @@ class _QuoteEditorPageState extends State<QuoteEditorPage> {
   static const _white70 = Color(0xFFB0B8D0);
   static const _border  = Color(0xFF2A3045);
 
-  final _fmt = NumberFormat('#,##0.00', 'en_KE');
-  String _kes(double v) => 'KES ${_fmt.format(v)}';
+  String _kes(double v) =>
+      formatAmount(v, widget.appState.currency, decimalDigits: 2);
 
   @override
   void initState() {
@@ -673,7 +673,7 @@ class _QuoteEditorPageState extends State<QuoteEditorPage> {
                       style: TextStyle(color: _white38, fontSize: 10, fontWeight: FontWeight.w600, letterSpacing: 0.8)),
                     const SizedBox(width: 4),
                     Tooltip(
-                      message: 'Enter % (e.g. 15%), flat KES (e.g. 5000), or fraction (e.g. 1/3)',
+                      message: 'Enter % (e.g. 15%), flat ${widget.appState.currency} (e.g. 5000), or fraction (e.g. 1/3)',
                       child: const Icon(Icons.info_outline, color: _white38, size: 13),
                     ),
                   ],
@@ -723,6 +723,7 @@ class _QuoteEditorPageState extends State<QuoteEditorPage> {
     return _ItemCardWidget(
       key: ValueKey('item_${catIdx}_${itemIdx}_${item.productId}'),
       item: item,
+      currency: widget.appState.currency,
       dec: _dec,
       onDelete: () => setState(() => _categories[catIdx].items.removeAt(itemIdx)),
       onChanged: () => setState(() {}),
@@ -981,9 +982,11 @@ class _QuoteEditorPageState extends State<QuoteEditorPage> {
                       decoration: _dec('Pcs')))),
                 ]),
                 const SizedBox(height: 14),
-                _labelWrap('UNIT PRICE (KES)',
+                _labelWrap('UNIT PRICE (${widget.appState.currency})',
                   TextField(controller: priceCtrl, style: const TextStyle(color: Colors.white),
-                    decoration: _dec('0'), keyboardType: TextInputType.number)),
+                    decoration: _dec('0'),
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    inputFormatters: moneyInputFormatters(decimalDigits: 2))),
               ],
             ),
           ),
@@ -998,8 +1001,8 @@ class _QuoteEditorPageState extends State<QuoteEditorPage> {
                     _categories[catIdx].items.add(QuoteItem(
                       productId: 'custom_${DateTime.now().millisecondsSinceEpoch}',
                       name: itemName.trim(),
-                      qty: double.tryParse(qtyCtrl.text) ?? 1.0,
-                      unitPrice: double.tryParse(priceCtrl.text) ?? 0.0,
+                      qty: parseMoneyOr(qtyCtrl.text, 1.0),
+                      unitPrice: parseMoneyOr(priceCtrl.text),
                       unit: unitCtrl.text.trim().isEmpty ? 'Pcs' : unitCtrl.text.trim(),
                     ));
                   });
@@ -1120,9 +1123,9 @@ class _QuoteEditorPageState extends State<QuoteEditorPage> {
                     borderRadius: BorderRadius.circular(8),
                     border: Border.all(color: _border),
                   ),
-                  child: const Text(
-                    '• Item name, qty, price\n• Item name - qty x price\n• Item name\tqty\tprice\n• Item name KES 5000 x 2',
-                    style: TextStyle(color: _white38, fontSize: 11, fontFamily: 'monospace'),
+                  child: Text(
+                    '• Item name, qty, price\n• Item name - qty x price\n• Item name\tqty\tprice\n• Item name ${widget.appState.currency} 5000 x 2',
+                    style: const TextStyle(color: _white38, fontSize: 11, fontFamily: 'monospace'),
                   ),
                 ),
                 const SizedBox(height: 14),
@@ -1292,7 +1295,6 @@ class _QuoteEditorPageState extends State<QuoteEditorPage> {
     });
 
     // Show report and handle unmatched items
-    final matchedCount = items.length - unmatchedItems.length;
     final message = 'Imported ${items.length} item${items.length == 1 ? '' : 's'}';
     
     if (unmatchedItems.isNotEmpty) {
@@ -1551,7 +1553,7 @@ class _QuoteEditorPageState extends State<QuoteEditorPage> {
                               ),
                               const SizedBox(height: 4),
                               Text(
-                                'Qty: ${unmatchedItems[i].$1.qty} ${unmatchedItems[i].$1.unit} • Price: KES ${unmatchedItems[i].$1.unitPrice.toStringAsFixed(2)}',
+                                'Qty: ${unmatchedItems[i].$1.qty} ${unmatchedItems[i].$1.unit} • Price: ${formatAmount(unmatchedItems[i].$1.unitPrice, widget.appState.currency, decimalDigits: 2)}',
                                 style: const TextStyle(color: Color(0xFF616C88), fontSize: 12),
                               ),
                               Text(
@@ -1590,7 +1592,7 @@ class _QuoteEditorPageState extends State<QuoteEditorPage> {
                                       .where((product) => product.name.toLowerCase().contains(textEditingValue.text.toLowerCase()))
                                       .toList();
                                 },
-                                displayStringForOption: (Product option) => '${option.name} (KES ${option.unitPrice.toStringAsFixed(2)})',
+                                displayStringForOption: (Product option) => '${option.name} (${formatAmount(option.unitPrice, widget.appState.currency, decimalDigits: 2)})',
                                 fieldViewBuilder: (context, textEditingController, focusNode, onFieldSubmitted) {
                                   textEditingController.text = nameController.text;
                                   textEditingController.selection = TextSelection.fromPosition(TextPosition(offset: textEditingController.text.length));
@@ -1859,7 +1861,7 @@ class _QuoteEditorPageState extends State<QuoteEditorPage> {
     return matrix[len1][len2];
   }
 
-  void _save() {
+  Future<void> _save() async {
     final typedName = _clientNameCtrl.text.trim();
 
     if (typedName.isEmpty) {
@@ -1901,21 +1903,158 @@ class _QuoteEditorPageState extends State<QuoteEditorPage> {
       q.vatPercent = widget.appState.defaultVatPercent;
       widget.appState.updateQuote(q);
     } else {
-      final num = widget.appState.nextQuoteNumber;
-      widget.appState.updateSettings(nextQuoteNumber: num + 1);
+      // Quotation numbers are issued by the cloud counter so they stay unique
+      // and sequential across devices — this needs an active connection.
+      final newId = await widget.appState.allocateQuoteNumber();
+      if (newId == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('You need to be online to generate a new quotation number.'),
+            backgroundColor: Colors.orange,
+          ));
+        }
+        return;
+      }
       widget.appState.addQuote(Quote(
-        id: 'Q-$num', clientId: client.id, clientName: client.name,
+        id: newId, clientId: client.id, clientName: client.name,
         date: DateTime.now(),
         expiryDate: DateTime.now().add(Duration(days: widget.appState.defaultExpiryDays)),
         status: _status, notes: _notes, labourInput: _labourInput, categories: _categories,
         vatPercent: widget.appState.defaultVatPercent,
       ));
     }
+    if (!mounted) return;
+
+    // Always surface items that aren't in the catalogue yet so the list can grow.
+    final newProducts = _collectNewProducts();
+    if (newProducts.isNotEmpty) {
+      await _promptCatalogueUpdate(newProducts.values.toList());
+    }
+    if (!mounted) return;
+
     Navigator.pop(context);
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(widget.quote != null ? 'Quote updated' : 'Quote saved'),
       backgroundColor: _surface,
     ));
+  }
+
+  /// Item names used in this quote that don't exist in the catalogue yet,
+  /// keyed by lower-cased name so duplicates collapse.
+  Map<String, QuoteItem> _collectNewProducts() {
+    final result = <String, QuoteItem>{};
+    for (final cat in _categories) {
+      for (final item in cat.items) {
+        final name = item.name.trim();
+        if (name.isEmpty) continue;
+        final key = name.toLowerCase();
+        if (widget.appState.productByName(name) != null) continue;
+        result.putIfAbsent(key, () => item);
+      }
+    }
+    return result;
+  }
+
+  Future<void> _promptCatalogueUpdate(List<QuoteItem> newItems) async {
+    final add = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: _border),
+        ),
+        title: Row(
+          children: [
+            const Icon(Icons.playlist_add_check, color: _gold),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'New products detected',
+                style: const TextStyle(color: Colors.white, fontSize: 16),
+              ),
+            ),
+          ],
+        ),
+        content: SizedBox(
+          width: 460,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                newItems.length == 1
+                    ? '1 item on this quote is not in your catalogue yet. Add it so future quotes autofill the price?'
+                    : '${newItems.length} items on this quote are not in your catalogue yet. Add them so future quotes autofill the price?',
+                style: const TextStyle(color: _white70, fontSize: 13),
+              ),
+              const SizedBox(height: 12),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 220),
+                child: ListView(
+                  shrinkWrap: true,
+                  children: [
+                    for (final item in newItems)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.add_circle_outline, color: _gold, size: 16),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                item.name,
+                                style: const TextStyle(color: Color(0xFFB0B8D0), fontSize: 13),
+                              ),
+                            ),
+                            Text(
+                              _kes(item.unitPrice),
+                              style: const TextStyle(color: _white38, fontSize: 12),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Not now', style: TextStyle(color: Color(0xFF8A92A6))),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: _gold, foregroundColor: Colors.black),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text('Add to catalogue'),
+          ),
+        ],
+      ),
+    );
+
+    if (add != true) return;
+
+    final base = DateTime.now().millisecondsSinceEpoch;
+    for (int i = 0; i < newItems.length; i++) {
+      final item = newItems[i];
+      widget.appState.addProduct(Product(
+        id: 'P-${base + i}',
+        name: item.name.trim(),
+        description: item.description,
+        unitPrice: item.unitPrice,
+        unit: item.unit,
+      ));
+    }
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(newItems.length == 1
+            ? '1 product added to catalogue'
+            : '${newItems.length} products added to catalogue'),
+        backgroundColor: Colors.green,
+      ));
+    }
   }
 
   /// Returns an existing client by name (case-insensitive) or creates and persists a new one.
@@ -1971,12 +2110,13 @@ class _QuoteEditorPageState extends State<QuoteEditorPage> {
 // ── Item card widget (stateful for stable controllers) ────────────────────────
 class _ItemCardWidget extends StatefulWidget {
   final QuoteItem item;
+  final String currency;
   final VoidCallback onDelete;
   final VoidCallback onChanged;
   final InputDecoration Function(String) dec;
 
-  const _ItemCardWidget({super.key, required this.item, required this.onDelete,
-    required this.onChanged, required this.dec});
+  const _ItemCardWidget({super.key, required this.item, required this.currency,
+    required this.onDelete, required this.onChanged, required this.dec});
 
   @override
   State<_ItemCardWidget> createState() => _ItemCardWidgetState();
@@ -1984,6 +2124,7 @@ class _ItemCardWidget extends StatefulWidget {
 
 class _ItemCardWidgetState extends State<_ItemCardWidget> {
   late final TextEditingController _nameCtrl;
+  late final TextEditingController _descCtrl;
   late final TextEditingController _qtyCtrl;
   late final TextEditingController _priceCtrl;
   final FocusNode _nameFocus = FocusNode();
@@ -1998,6 +2139,7 @@ class _ItemCardWidgetState extends State<_ItemCardWidget> {
   void initState() {
     super.initState();
     _nameCtrl  = TextEditingController(text: widget.item.name);
+    _descCtrl  = TextEditingController(text: widget.item.description);
     _qtyCtrl   = TextEditingController(text: _compact(widget.item.qty));
     _priceCtrl = TextEditingController(text: _compact(widget.item.unitPrice));
   }
@@ -2005,6 +2147,7 @@ class _ItemCardWidgetState extends State<_ItemCardWidget> {
   @override
   void dispose() {
     _nameCtrl.dispose();
+    _descCtrl.dispose();
     _qtyCtrl.dispose();
     _priceCtrl.dispose();
     _nameFocus.dispose();
@@ -2047,6 +2190,11 @@ class _ItemCardWidgetState extends State<_ItemCardWidget> {
                 widget.item.unit = product.unit;
                 widget.item.unitPrice = product.unitPrice;
                 _priceCtrl.text = _compact(product.unitPrice);
+                if (widget.item.description.trim().isEmpty &&
+                    product.description.trim().isNotEmpty) {
+                  widget.item.description = product.description;
+                  _descCtrl.text = product.description;
+                }
               }
             });
             widget.onChanged();
@@ -2098,17 +2246,27 @@ class _ItemCardWidgetState extends State<_ItemCardWidget> {
           ])),
           const SizedBox(width: 12),
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Text('UNIT PRICE (KES)', style: TextStyle(color: _white38, fontSize: 10, fontWeight: FontWeight.w600, letterSpacing: 0.8)),
+            Text('UNIT PRICE (${widget.currency})', style: const TextStyle(color: _white38, fontSize: 10, fontWeight: FontWeight.w600, letterSpacing: 0.8)),
             const SizedBox(height: 6),
             TextField(
               controller: _priceCtrl,
               style: const TextStyle(color: Colors.white),
               decoration: widget.dec('0'),
               keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              onChanged: (v) { widget.item.unitPrice = double.tryParse(v) ?? widget.item.unitPrice; widget.onChanged(); },
+              inputFormatters: moneyInputFormatters(decimalDigits: 2),
+              onChanged: (v) { widget.item.unitPrice = parseMoneyOr(v, widget.item.unitPrice); widget.onChanged(); },
             ),
           ])),
         ]),
+        const SizedBox(height: 10),
+        const Text('DESCRIPTION (paint code / colour, spec)', style: TextStyle(color: _white38, fontSize: 10, fontWeight: FontWeight.w600, letterSpacing: 0.8)),
+        const SizedBox(height: 6),
+        TextField(
+          controller: _descCtrl,
+          style: const TextStyle(color: Colors.white, fontSize: 13),
+          decoration: widget.dec('e.g. Paint code NCS S 1500-N, Matt finish'),
+          onChanged: (v) { widget.item.description = v; widget.onChanged(); },
+        ),
       ]),
     );
   }

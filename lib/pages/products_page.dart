@@ -3,9 +3,9 @@
 // Styled with the unified dark-blue table design system matching Clients & Invoices.
 
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 import '../app_state.dart';
 import '../models.dart';
+import '../widgets/money_text.dart';
 
 // ─── Design Tokens (Dark-Blue Theme) ──────────────────────────────────────────
 const _bg      = Color(0xFF0F162C);
@@ -26,8 +26,6 @@ class ProductsPage extends StatefulWidget {
 
 class _ProductsPageState extends State<ProductsPage> {
   String _search = '';
-
-  final _currencyFmt = NumberFormat('#,##0', 'en_KE');
 
   @override
   Widget build(BuildContext context) {
@@ -158,7 +156,7 @@ class _ProductsPageState extends State<ProductsPage> {
                       child: Column(
                         children: [
                           // Table Header
-                          const _ProductTableHeader(),
+                          _ProductTableHeader(currency: appState.currency),
                           const Divider(color: _border, height: 1),
 
                           // Table Rows
@@ -170,7 +168,7 @@ class _ProductsPageState extends State<ProductsPage> {
                                   final product = filtered[idx];
                                   return _ProductTableRow(
                                     product: product,
-                                    formattedPrice: _currencyFmt.format(product.unitPrice),
+                                    formattedPrice: formatAmount(product.unitPrice, appState.currency, decimalDigits: 2),
                                     onEdit: () => _showProductDialog(context, appState, product),
                                     onDelete: () => _confirmDelete(context, appState, product),
                                   );
@@ -242,7 +240,8 @@ class _ProductsPageState extends State<ProductsPage> {
 
 // ─── Table Header ─────────────────────────────────────────────────────────────
 class _ProductTableHeader extends StatelessWidget {
-  const _ProductTableHeader();
+  final String currency;
+  const _ProductTableHeader({required this.currency});
 
   @override
   Widget build(BuildContext context) {
@@ -251,12 +250,12 @@ class _ProductTableHeader extends StatelessWidget {
     return Container(
       color: const Color(0xFF131722),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      child: const Row(
+      child: Row(
         children: [
-          Expanded(flex: 4, child: Text('ITEM / SERVICE NAME', style: style)),
-          Expanded(flex: 2, child: Text('UNIT', style: style)),
-          Expanded(flex: 2, child: Text('UNIT PRICE (KES)', style: style, textAlign: TextAlign.right)),
-          SizedBox(width: 90, child: Text('ACTIONS', style: style, textAlign: TextAlign.center)),
+          const Expanded(flex: 4, child: Text('ITEM / SERVICE NAME', style: style)),
+          const Expanded(flex: 2, child: Text('UNIT', style: style)),
+          Expanded(flex: 2, child: Text('UNIT PRICE ($currency)', style: style, textAlign: TextAlign.right)),
+          const SizedBox(width: 90, child: Text('ACTIONS', style: style, textAlign: TextAlign.center)),
         ],
       ),
     );
@@ -341,7 +340,7 @@ class _ProductTableRow extends StatelessWidget {
               Expanded(
                 flex: 2,
                 child: Text(
-                  'KES $formattedPrice',
+                  formattedPrice,
                   style: const TextStyle(
                     color: _gold,
                     fontSize: 13,
@@ -405,7 +404,9 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     final e = widget.existing;
     _nameCtrl  = TextEditingController(text: e?.name ?? '');
     _unitCtrl  = TextEditingController(text: e?.unit ?? '');
-    _priceCtrl = TextEditingController(text: e != null ? e.unitPrice.toStringAsFixed(0) : '');
+    _priceCtrl = TextEditingController(
+      text: e != null ? formatMoney(e.unitPrice, decimalDigits: 2) : '',
+    );
     _descCtrl  = TextEditingController(text: e?.description ?? '');
   }
 
@@ -506,15 +507,16 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text('UNIT PRICE (KES)', style: TextStyle(color: _white38, fontSize: 10, fontWeight: FontWeight.w600, letterSpacing: 0.8)),
+                          Text('UNIT PRICE (${widget.appState.currency})', style: const TextStyle(color: _white38, fontSize: 10, fontWeight: FontWeight.w600, letterSpacing: 0.8)),
                           const SizedBox(height: 6),
                           TextFormField(
                             controller: _priceCtrl,
                             keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                            inputFormatters: moneyInputFormatters(decimalDigits: 2),
                             style: const TextStyle(color: Colors.white, fontSize: 13),
                             validator: (v) {
                               if (v == null || v.trim().isEmpty) return 'Price required';
-                              if (double.tryParse(v.trim()) == null) return 'Enter a valid number';
+                              if (parseMoney(v) == null) return 'Enter a valid number';
                               return null;
                             },
                             decoration: _dec('0'),
@@ -578,7 +580,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
       final name = _nameCtrl.text.trim();
       final unit = _unitCtrl.text.trim();
       final description = _descCtrl.text.trim();
-      final price = double.tryParse(_priceCtrl.text.trim()) ?? 0;
+      final price = parseMoney(_priceCtrl.text) ?? 0;
       
       if (widget.existing != null) {
         widget.appState.updateProduct(widget.existing!.copyWith(

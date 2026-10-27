@@ -2,18 +2,20 @@
 
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'app_env.dart';
 
 class GroqService {
   static final GroqService _instance = GroqService._();
   factory GroqService() => _instance;
   GroqService._();
 
-  // API key is supplied at build time via --dart-define=GROQ_API_KEY=<your_key>
-  // or stored in a local .env file (not committed to git).
-  static const String _apiKey = String.fromEnvironment('GROQ_API_KEY', defaultValue: '');
+  static const String _apiKey = AppEnv.groqApiKey;
   static const String _baseUrl = 'https://api.groq.com/openai/v1/chat/completions';
 
+  bool get isConfigured => AppEnv.hasGroqKey;
+
   Future<String> formatQuoteText(String rawText) async {
+    if (!isConfigured) return rawText;
     try {
       final response = await http.post(
         Uri.parse(_baseUrl),

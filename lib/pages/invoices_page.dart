@@ -16,6 +16,9 @@ import '../services/review_server_service.dart';
 import 'enquiry_invoice_page.dart';
 import 'pdf_viewer_page.dart';
 import 'signature_page.dart';
+import '../widgets/money_text.dart';
+import '../widgets/scrollable_panel.dart';
+import '../widgets/send_contact_buttons.dart';
 
 const _surface = Color(0xFF161B26);
 const _border  = Color(0xFF2A3045);
@@ -38,11 +41,10 @@ class _InvoicesPageState extends State<InvoicesPage> {
   String _search = '';
   InvoiceSort _sort = InvoiceSort.dateDesc;
 
-  final _currencyFmt = NumberFormat.currency(symbol: 'KES ', decimalDigits: 0);
-
   @override
   Widget build(BuildContext context) {
     final appState = AppStateProvider.of(context);
+    final currency = appState.currency;
     final filtered = appState.invoices.where((inv) {
       final matchStatus = _filterStatus == null || inv.status == _filterStatus;
       final matchSearch = _search.isEmpty ||
@@ -90,11 +92,11 @@ class _InvoicesPageState extends State<InvoicesPage> {
           scrollDirection: Axis.horizontal,
           child: Row(
             children: [
-              _kpi('Total Invoiced', _fmtKpi(totalAmount), Icons.receipt_long, _gold),
+              _kpi('Total Invoiced', _fmtKpi(totalAmount, currency), Icons.receipt_long, _gold),
               const SizedBox(width: 12),
-              _kpi('Paid', _fmtKpi(paidAmount), Icons.check_circle_outline, Colors.green),
+              _kpi('Paid', _fmtKpi(paidAmount, currency), Icons.check_circle_outline, Colors.green),
               const SizedBox(width: 12),
-              _kpi('Outstanding', _fmtKpi(outstanding), Icons.hourglass_top, Colors.orange),
+              _kpi('Outstanding', _fmtKpi(outstanding, currency), Icons.hourglass_top, Colors.orange),
               const SizedBox(width: 12),
               _kpi('Overdue', '$overdueCount overdue', Icons.warning_amber_rounded, Colors.redAccent),
             ],
@@ -222,7 +224,7 @@ class _InvoicesPageState extends State<InvoicesPage> {
                     final invoice = filtered[index];
                     return _InvoiceCard(
                       invoice: invoice,
-                      currencyFmt: _currencyFmt,
+                      currency: currency,
                       onTap: () => _openInvoicePdf(context, invoice, appState),
                       onEdit: () => openEnquiryInvoicePage(context, appState, invoice: invoice),
                       onSignOrShare: () => _showSignOrShareInvoiceDialog(context, invoice, appState),
@@ -379,7 +381,9 @@ class _InvoicesPageState extends State<InvoicesPage> {
             ),
           ],
         ),
-        content: Column(
+        content: ScrollablePanel(
+          maxHeightFactor: 0.6,
+          child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -431,7 +435,23 @@ class _InvoicesPageState extends State<InvoicesPage> {
                 },
               ),
             ),
+            const SizedBox(height: 14),
+            const Divider(color: _border, height: 1),
+            const SizedBox(height: 10),
+            const Text(
+              'Send directly — the client\'s WhatsApp number or email is saved to their record.',
+              style: TextStyle(color: _white54, fontSize: 11.5),
+            ),
+            const SizedBox(height: 8),
+            SendContactButtons(
+              appState: state,
+              clientId: invoice.clientId,
+              clientName: invoice.clientName,
+              docLabel: 'Invoice ${invoice.id}',
+              url: url,
+            ),
           ],
+          ),
         ),
         actions: [
           TextButton(
@@ -499,7 +519,7 @@ class _InvoicesPageState extends State<InvoicesPage> {
           return PdfService.generateQuotePdf(matchingQuote, appState);
         }
 
-        // Otherwise generate clean Majuma Enquiry Invoice PDF
+        // Otherwise generate clean Modern Edge Enquiry Invoice PDF
         return PdfService.generateEnquiryInvoicePdf(
           state: appState,
           customerName: invoice.clientName.isEmpty ? 'Valued Customer' : invoice.clientName,
@@ -669,17 +689,13 @@ class _InvoicesPageState extends State<InvoicesPage> {
     );
   }
 
-  String _fmtKpi(double v) {
-    if (v >= 1000000) return 'KES ${(v / 1000000).toStringAsFixed(1)}M';
-    if (v >= 1000) return 'KES ${(v / 1000).toStringAsFixed(0)}K';
-    return 'KES ${v.toStringAsFixed(0)}';
-  }
+  String _fmtKpi(double v, String currency) => formatCompactAmount(v, currency);
 }
 
 // ─── Sleek Invoice Card ───────────────────────────────────────────────────────
 class _InvoiceCard extends StatelessWidget {
   final Invoice invoice;
-  final NumberFormat currencyFmt;
+  final String currency;
   final VoidCallback onTap;
   final VoidCallback onEdit;
   final VoidCallback onSignOrShare;
@@ -688,7 +704,7 @@ class _InvoiceCard extends StatelessWidget {
 
   const _InvoiceCard({
     required this.invoice,
-    required this.currencyFmt,
+    required this.currency,
     required this.onTap,
     required this.onEdit,
     required this.onSignOrShare,
@@ -843,11 +859,16 @@ class _InvoiceCard extends StatelessWidget {
                 const SizedBox(height: 12),
 
                 // Bottom Row: Total Amount + Quick Actions
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 2,
+                  alignment: WrapAlignment.spaceBetween,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
-                    Text(
-                      currencyFmt.format(inv.amount),
+                    MoneyText(
+                      formatAmount(inv.amount, currency),
+                      maxWidth: 220,
+                      alignment: Alignment.centerLeft,
                       style: const TextStyle(
                         color: _gold,
                         fontSize: 18,

@@ -5,7 +5,6 @@ import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'dart:io';
 import 'dart:convert';
-import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -14,8 +13,10 @@ import '../models.dart';
 import '../services/auth_service.dart';
 import '../services/cloud_sync_service.dart';
 import '../services/notification_service.dart';
+import '../services/update_service.dart';
 import 'sign_in_page.dart';
 import 'pdf_viewer_page.dart';
+import 'update_prompt.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -27,13 +28,13 @@ class _SettingsPageState extends State<SettingsPage> {
   final _formKey = GlobalKey<FormState>();
 
   bool _checkingUpdate = false;
-  Map<String, dynamic>? _latestRelease;
+  AppRelease? _latestRelease;
   String? _updateError;
   String _currentAppVersion = '1.0.0+1';
   bool _hasCheckedUpdate = false;
   bool _autoCheckUpdates = false;
 
-  static const _kAutoCheckUpdates = 'auto_check_updates';
+  static const _kAutoCheckUpdates = UpdateService.kAutoCheckKey;
 
   @override
   void initState() {
@@ -44,12 +45,11 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Future<void> _loadAutoCheckPref() async {
     final prefs = await SharedPreferences.getInstance();
-    final enabled = prefs.getBool(_kAutoCheckUpdates) ?? false;
+    final enabled = prefs.getBool(_kAutoCheckUpdates) ?? true;
     if (mounted) {
       setState(() => _autoCheckUpdates = enabled);
     }
     if (enabled) {
-      // Auto-check silently on startup
       _checkForUpdate();
     }
   }
@@ -76,34 +76,41 @@ class _SettingsPageState extends State<SettingsPage> {
       _updateError = null;
       _hasCheckedUpdate = true;
     });
-    try {
-      final res = await http.get(
-        Uri.parse('https://api.github.com/repos/jumagee7/QuotiMate/releases/latest'),
-        headers: {'Accept': 'application/vnd.github.v3+json'},
-      );
-      if (res.statusCode == 200) {
-        final data = jsonDecode(res.body) as Map<String, dynamic>;
-        setState(() {
-          _latestRelease = data;
-          _checkingUpdate = false;
-        });
-      } else if (res.statusCode == 404) {
-        setState(() {
-          _updateError = 'No releases found on GitHub repository jumagee7/QuotiMate yet.';
-          _checkingUpdate = false;
-        });
+
+    final service = UpdateService();
+    final release = await service.fetchLatest();
+    final installed = await service.currentVersionWithBuild();
+    if (!mounted) return;
+
+    setState(() {
+      _currentAppVersion = installed;
+      _checkingUpdate = false;
+      if (release == null) {
+        _latestRelease = null;
+        _updateError = 'Could not reach GitHub. Check your connection and try again.';
+      } else if (!release.isNewerThan(installed)) {
+        // Never offer an older (or identical) build, even from an offline cache.
+        _latestRelease = null;
       } else {
-        setState(() {
-          _updateError = 'GitHub API responded with status code ${res.statusCode}';
-          _checkingUpdate = false;
-        });
+        _latestRelease = release;
       }
-    } catch (e) {
-      setState(() {
-        _updateError = 'Unable to connect to GitHub: $e';
-        _checkingUpdate = false;
-      });
-    }
+    });
+  }
+
+  /// Opens the shared update prompt so Settings and the home banner behave the
+  /// same way (progress, install permission, clean-install fallback).
+  Future<void> _openUpdatePrompt(AppRelease release) async {
+    final installed = await UpdateService().currentVersionWithBuild();
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      builder: (_) => UpdatePromptDialog(
+        release: release,
+        installedVersion: installed,
+      ),
+    );
+    if (mounted) _checkForUpdate();
   }
 
   @override
@@ -210,7 +217,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 style: const TextStyle(color: Colors.white),
                 decoration: _inputDecoration('Select PDF Template'),
                 items: const [
-                  DropdownMenuItem(value: 'majuma', child: Text('Majuma Interiors (Default)')),
+                  DropdownMenuItem(value: 'modern_edge', child: Text('Modern Edge (Default)')),
                   DropdownMenuItem(value: 'minimalist', child: Text('Modern Minimalist')),
                 ],
                 onChanged: (val) {
@@ -299,27 +306,175 @@ class _SettingsPageState extends State<SettingsPage> {
             children: [
               _switchTile(
                 'Enable In-App Notifications',
-                'Show notification badges and alerts',
+                'Show notification badges and alerts. Switching this off cancels every scheduled alarm.',
                 appState.notificationsEnabled,
                 (val) => appState.updateSettings(notificationsEnabled: val),
                 Icons.notifications_active_outlined,
               ),
               const SizedBox(height: 12),
-              ElevatedButton.icon(
+              _switchTile(
+                'Ring & Buzz Alarms',
+                'Alarms take over the screen and keep vibrating until you tap Stop. Off turns them into ordinary notifications.',
+                appState.alarmBuzzEnabled,
+                (val) => appState.updateSettings(alarmBuzzEnabled: val),
+                Icons.vibration,
+              ),
+              const SizedBox(height: 12),
+              FilledButton.icon(
                 onPressed: () async {
-                  await NotificationService().requestPermissions();
-                  await NotificationService().showTestNotification();
+                  final service = NotificationService();
+                  await service.requestPermissions();
+                  final result = await service.showTestNotification();
+                  final delivered = result.startsWith('Device alert displayed');
+                  appState.pushNotification(
+                    key: 'n_test_${DateTime.now().millisecondsSinceEpoch}',
+                    title: delivered ? 'Device alert confirmed' : 'Device alert failed',
+                    body: result,
+                    icon: delivered
+                        ? kNotificationIcons['bell']!
+                        : kNotificationIcons['bell_off']!,
+                    color: delivered ? const Color(0xFF10B981) : Colors.redAccent,
+                  );
+                  showToast(delivered ? '🔔 Alert on your shade' : '⚠️ ${result.split(' · ').first}');
                 },
                 icon: const Icon(Icons.play_arrow, size: 16),
                 label: const Text('Test Notification'),
-                style: ElevatedButton.styleFrom(
+                style: FilledButton.styleFrom(
                   backgroundColor: const Color(0xFFFFC107),
                   foregroundColor: Colors.black,
                 ),
               ),
               const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: () async {
+                  final service = NotificationService();
+                  // Full-screen access lives behind its own settings screen, so
+                  // ask for it here where the user expects to tune alarms.
+                  await service.requestPermissions(askFullScreen: true);
+                  final result = await service.showTestAlarm(buzz: appState.alarmBuzzEnabled);
+                  appState.pushNotification(
+                    key: 'n_alarm_test_${DateTime.now().millisecondsSinceEpoch}',
+                    title: 'Alarm test',
+                    body: result,
+                    icon: result.startsWith('Alarm posted')
+                        ? kNotificationIcons['bell']!
+                        : kNotificationIcons['bell_off']!,
+                    color: result.startsWith('Alarm posted')
+                        ? const Color(0xFF10B981)
+                        : Colors.redAccent,
+                  );
+                  showToast(result);
+                },
+                icon: const Icon(Icons.alarm, size: 16),
+                label: const Text('Test Alarm'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xFFFFC107),
+                  side: const BorderSide(color: Color(0xFF2A3045)),
+                ),
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: () async {
+                  final service = NotificationService();
+                  await service.requestPermissions();
+                  final result = await service.scheduleTestNotification(seconds: 10);
+                  final isArmed = result.startsWith('Armed for');
+                  appState.pushNotification(
+                    key: 'n_bg_test_${DateTime.now().millisecondsSinceEpoch}',
+                    title: isArmed ? 'Background test armed' : 'Background alert notice',
+                    body: result,
+                    icon: isArmed ? kNotificationIcons['bell']! : kNotificationIcons['bell_off']!,
+                    color: isArmed ? const Color(0xFF10B981) : Colors.amber,
+                  );
+                  showToast(isArmed ? '⏳ $result' : '⚠️ $result');
+                },
+                icon: const Icon(Icons.timer_outlined, size: 16),
+                label: const Text('Test Background Alert (in 10s)'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xFF60A5FA),
+                  side: const BorderSide(color: Color(0xFF2A3045)),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () async {
+                        final service = NotificationService();
+                        await service.openExactAlarmSettings();
+                        showToast('Turn ON "Allow setting alarms & reminders"');
+                      },
+                      icon: const Icon(Icons.alarm_on, size: 15),
+                      label: const Text('Alarms & Reminders', style: TextStyle(fontSize: 12)),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: const Color(0xFF34D399),
+                        side: const BorderSide(color: Color(0xFF2A3045)),
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () async {
+                        final service = NotificationService();
+                        await service.requestIgnoreBatteryOptimizations();
+                        showToast('Exclude QuotiMate from battery limits');
+                      },
+                      icon: const Icon(Icons.battery_charging_full, size: 15),
+                      label: const Text('Battery Settings', style: TextStyle(fontSize: 12)),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: const Color(0xFFA78BFA),
+                        side: const BorderSide(color: Color(0xFF2A3045)),
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: () async {
+                  final service = NotificationService();
+                  await service.requestPermissions();
+                  final summary = await service.diagnosticSummary();
+                  if (summary == null) return;
+                  final troubled = summary.contains('BLOCKED') ||
+                      summary.contains('DEGRADED') ||
+                      summary.contains('PLUGIN OFFLINE');
+                  appState.pushNotification(
+                    key: 'n_diag_${DateTime.now().millisecondsSinceEpoch}',
+                    title: 'Alert access check',
+                    body: summary,
+                    icon: troubled
+                        ? kNotificationIcons['bell_off']!
+                        : kNotificationIcons['bell']!,
+                    color: troubled ? Colors.redAccent : const Color(0xFF10B981),
+                  );
+                  if (summary.contains('BLOCKED: notifications')) {
+                    // Android shows the runtime dialog only once. After a denial
+                    // the system settings screen is the only way back, so open
+                    // it instead of silently re-requesting.
+                    await service.openNotificationSettings();
+                    showToast('Turn ON notifications for QuotiMate');
+                    return;
+                  }
+                  if (troubled) {
+                    await service.requestPermissions();
+                  }
+                  showToast('🔎 ${summary.split(' · ').first}');
+                },
+                icon: const Icon(Icons.security_outlined, size: 16),
+                label: const Text('Check Alert Access'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xFFFFC107),
+                  side: const BorderSide(color: Color(0xFF2A3045)),
+                ),
+              ),
+              const SizedBox(height: 8),
               const Text(
-                'Tap to test if notifications are working on your device',
+                'Tap to test if notifications are working on your device, or check what Android is blocking',
                 style: TextStyle(color: Colors.white54, fontSize: 11),
               ),
             ],
@@ -507,29 +662,19 @@ class _SettingsPageState extends State<SettingsPage> {
 
   // ── App Update Section ─────────────────────────────────────────────────────
   Widget _buildAppUpdateSection(BuildContext context) {
-    final hasRelease = _latestRelease != null;
-    final tagName = _latestRelease?['tag_name'] as String? ?? '';
-    final releaseName = _latestRelease?['name'] as String? ?? '';
-    final releaseBody = _latestRelease?['body'] as String? ?? '';
-    final htmlUrl = _latestRelease?['html_url'] as String? ?? 'https://github.com/jumagee7/QuotiMate/releases';
-
-    // Find APK asset if available (prioritize arm64-v8a APK)
-    final assets = (_latestRelease?['assets'] as List<dynamic>?) ?? [];
-    final v8aAsset = assets.firstWhere(
-      (a) {
-        final name = (a['name'] as String? ?? '').toLowerCase();
-        return name.endsWith('.apk') && (name.contains('v8a') || name.contains('arm64'));
-      },
-      orElse: () => null,
-    );
-    final apkAsset = v8aAsset ?? assets.firstWhere(
-      (a) => (a['name'] as String? ?? '').endsWith('.apk'),
-      orElse: () => null,
-    );
-    final apkDownloadUrl = apkAsset != null ? (apkAsset['browser_download_url'] as String?) : null;
-    final apkLabel = apkAsset != null && (apkAsset['name'] as String? ?? '').toLowerCase().contains('v8a')
-        ? 'Download v8a APK'
+    final release = _latestRelease;
+    final hasRelease = release != null;
+    final tagName = release?.tagName ?? '';
+    final releaseName = release?.name ?? '';
+    final releaseBody = release?.notes ?? '';
+    final htmlUrl = release?.htmlUrl ?? 'https://github.com/jumagee7/QuotiMate/releases';
+    final apkDownloadUrl = release?.apkUrl;
+    final apkLabel = release?.apkName?.toLowerCase().contains('v8a') ?? false
+        ? 'Download v8a'
         : 'Download APK';
+    final apkSize = (release?.apkBytes ?? 0) > 0
+        ? ' · ${(release!.apkBytes / (1024 * 1024)).toStringAsFixed(1)} MB'
+        : '';
 
     return _sectionCard(
       icon: Icons.system_update_alt_rounded,
@@ -646,25 +791,21 @@ class _SettingsPageState extends State<SettingsPage> {
                     ),
                   ],
                   const SizedBox(height: 14),
-                  Row(
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
                     children: [
-                      if (apkDownloadUrl != null) ...[
+                      if (apkDownloadUrl != null)
                         FilledButton.icon(
-                          onPressed: () async {
-                            final uri = Uri.parse(apkDownloadUrl);
-                            if (await canLaunchUrl(uri)) {
-                              await launchUrl(uri, mode: LaunchMode.externalApplication);
-                            }
-                          },
-                          icon: const Icon(Icons.download_rounded, size: 16),
-                          label: Text(apkLabel),
+                          onPressed: () => _openUpdatePrompt(release),
+                          icon: const Icon(Icons.system_update_alt_rounded, size: 15),
+                          label: Text('$apkLabel$apkSize'),
                           style: FilledButton.styleFrom(
                             backgroundColor: const Color(0xFF10B981),
                             foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                           ),
                         ),
-                        const SizedBox(width: 10),
-                      ],
                       OutlinedButton.icon(
                         onPressed: () async {
                           final uri = Uri.parse(htmlUrl);
@@ -672,11 +813,12 @@ class _SettingsPageState extends State<SettingsPage> {
                             await launchUrl(uri, mode: LaunchMode.externalApplication);
                           }
                         },
-                        icon: const Icon(Icons.open_in_new_rounded, size: 16),
-                        label: const Text('View on GitHub'),
+                        icon: const Icon(Icons.open_in_new_rounded, size: 15),
+                        label: const Text('GitHub'),
                         style: OutlinedButton.styleFrom(
                           foregroundColor: const Color(0xFFFFC107),
                           side: const BorderSide(color: Color(0xFFFFC107)),
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                         ),
                       ),
                     ],
@@ -1086,7 +1228,7 @@ class _SettingsPageState extends State<SettingsPage> {
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel', style: TextStyle(color: Colors.white54))),
           ElevatedButton(
             onPressed: () {
-              appState.resetSettingsToDefaults();
+              appState.resetSettings();
               Navigator.pop(ctx);
               ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(content: Text('Settings reset to defaults')));
             },

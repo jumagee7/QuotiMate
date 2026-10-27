@@ -3,6 +3,12 @@
 import 'package:flutter/material.dart';
 import '../app_state.dart';
 import '../models.dart';
+import '../services/notification_service.dart';
+
+String fmtClock(DateTime dt) {
+  final h = dt.hour > 12 ? dt.hour - 12 : (dt.hour == 0 ? 12 : dt.hour);
+  return '$h:${dt.minute.toString().padLeft(2, '0')} ${dt.hour >= 12 ? 'PM' : 'AM'}';
+}
 
 class SchedulePage extends StatefulWidget {
   const SchedulePage({super.key});
@@ -101,16 +107,20 @@ class _TasksTab extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // â”€â”€ Stats Row â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-            Row(
-              children: [
-                _statChip('All', total, null, filterStatus, onFilterChanged),
-                const SizedBox(width: 8),
-                _statChip('To Do', todo, TaskStatus.todo, filterStatus, onFilterChanged),
-                const SizedBox(width: 8),
-                _statChip('In Progress', inProg, TaskStatus.inProgress, filterStatus, onFilterChanged),
-                const SizedBox(width: 8),
-                _statChip('Done', done, TaskStatus.done, filterStatus, onFilterChanged),
-              ],
+            // ── Stats Row ──────────────────────────────────────────────────
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  _statChip('All', total, null, filterStatus, onFilterChanged),
+                  const SizedBox(width: 8),
+                  _statChip('To Do', todo, TaskStatus.todo, filterStatus, onFilterChanged),
+                  const SizedBox(width: 8),
+                  _statChip('In Progress', inProg, TaskStatus.inProgress, filterStatus, onFilterChanged),
+                  const SizedBox(width: 8),
+                  _statChip('Done', done, TaskStatus.done, filterStatus, onFilterChanged),
+                ],
+              ),
             ),
             const SizedBox(height: 16),
 
@@ -121,7 +131,10 @@ class _TasksTab extends StatelessWidget {
                   : ListView.separated(
                       itemCount: tasks.length,
                       separatorBuilder: (context, index) => const SizedBox(height: 8),
-                      itemBuilder: (ctx, i) => _TaskCard(task: tasks[i]),
+                      itemBuilder: (ctx, i) => _TaskCard(
+                        task: tasks[i],
+                        onEdit: () => _showTaskDialog(ctx, state, existing: tasks[i]),
+                      ),
                     ),
             ),
           ],
@@ -133,7 +146,7 @@ class _TasksTab extends StatelessWidget {
           right: 0,
           child: FloatingActionButton.extended(
             heroTag: 'task_fab',
-            onPressed: () => _showAddTaskDialog(context, state),
+            onPressed: () => _showTaskDialog(context, state),
             backgroundColor: const Color(0xFFFFC107),
             foregroundColor: Colors.black,
             icon: const Icon(Icons.add),
@@ -168,20 +181,31 @@ class _TasksTab extends StatelessWidget {
     );
   }
 
-  void _showAddTaskDialog(BuildContext context, AppState state) {
-    final titleCtrl = TextEditingController();
-    final descCtrl = TextEditingController();
-    TaskPriority priority = TaskPriority.medium;
-    DateTime dueDate = DateTime.now().add(const Duration(days: 1));
-    bool alarm = false;
+  void _showTaskDialog(BuildContext context, AppState state, {AppTask? existing}) {
+    final titleCtrl = TextEditingController(text: existing?.title ?? '');
+    final descCtrl = TextEditingController(text: existing?.description ?? '');
+    TaskPriority priority = existing?.priority ?? TaskPriority.medium;
+    // A date-only due date meant midnight, so every "alarm" either fired at
+    // 00:00 or was dropped for being in the past. New tasks ring at 09:00.
+    DateTime dueDate = existing?.dueDate ??
+        DateTime.now().add(const Duration(days: 1)).copyWith(hour: 9, minute: 0);
+    bool alarm = existing?.alarmEnabled ?? false;
+    int lead = existing?.reminderLeadMinutes ?? 0;
 
     showDialog(
       context: context,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
+        builder: (ctx, setDialogState) {
+          final alarmAt = dueDate.subtract(Duration(minutes: lead));
+          final willRing = dueDate.isAfter(DateTime.now());
+          final leadWillRing = alarmAt.isAfter(DateTime.now());
+          return AlertDialog(
           backgroundColor: const Color(0xFF19233E),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: const Text('Add New Task', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          title: Text(
+            existing == null ? 'Add New Task' : 'Edit Task',
+            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          ),
           content: SizedBox(
             width: 400,
             child: SingleChildScrollView(
@@ -195,53 +219,81 @@ class _TasksTab extends StatelessWidget {
                   const SizedBox(height: 16),
                   const Text('Priority', style: TextStyle(color: Colors.white70, fontSize: 13)),
                   const SizedBox(height: 8),
-                  Row(
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
                     children: TaskPriority.values.map((p) {
                       final sel = priority == p;
-                      return Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: GestureDetector(
-                          onTap: () => setDialogState(() => priority = p),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                            decoration: BoxDecoration(
-                              color: sel ? p.color.withValues(alpha: 0.2) : Colors.transparent,
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(color: sel ? p.color : Colors.white24),
-                            ),
-                            child: Row(
-                              children: [
-                                Icon(p.icon, color: p.color, size: 14),
-                                const SizedBox(width: 6),
-                                Text(p.label, style: TextStyle(color: p.color, fontSize: 13, fontWeight: FontWeight.w600)),
-                              ],
-                            ),
+                      return GestureDetector(
+                        onTap: () => setDialogState(() => priority = p),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: sel ? p.color.withValues(alpha: 0.2) : Colors.transparent,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: sel ? p.color : Colors.white24),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(p.icon, color: p.color, size: 14),
+                              const SizedBox(width: 6),
+                              Text(p.label, style: TextStyle(color: p.color, fontSize: 13, fontWeight: FontWeight.w600)),
+                            ],
                           ),
                         ),
                       );
                     }).toList(),
                   ),
                   const SizedBox(height: 16),
+                  const Text('Due date & time', style: TextStyle(color: Colors.white70, fontSize: 13)),
+                  const SizedBox(height: 4),
                   Row(
                     children: [
-                      const Text('Due Date:', style: TextStyle(color: Colors.white70, fontSize: 13)),
-                      const SizedBox(width: 12),
-                      TextButton(
-                        onPressed: () async {
-                          final picked = await showDatePicker(
-                            context: ctx,
-                            initialDate: dueDate,
-                            firstDate: DateTime.now(),
-                            lastDate: DateTime.now().add(const Duration(days: 365)),
-                            builder: (c, child) => Theme(
-                              data: ThemeData.dark().copyWith(colorScheme: const ColorScheme.dark(primary: Color(0xFFFFC107))),
-                              child: child!,
-                            ),
-                          );
-                          if (picked != null) setDialogState(() => dueDate = picked);
-                        },
-                        style: TextButton.styleFrom(foregroundColor: const Color(0xFFFFC107)),
-                        child: Text('${dueDate.day}/${dueDate.month}/${dueDate.year}'),
+                      Expanded(
+                        child: TextButton.icon(
+                          onPressed: () async {
+                            final picked = await showDatePicker(
+                              context: ctx,
+                              initialDate: dueDate,
+                              firstDate: DateTime.now().subtract(const Duration(days: 365)),
+                              lastDate: DateTime.now().add(const Duration(days: 365 * 3)),
+                              builder: (c, child) => Theme(
+                                data: ThemeData.dark().copyWith(colorScheme: const ColorScheme.dark(primary: Color(0xFFFFC107))),
+                                child: child!,
+                              ),
+                            );
+                            if (picked != null) {
+                              setDialogState(() => dueDate = DateTime(
+                                picked.year, picked.month, picked.day, dueDate.hour, dueDate.minute,
+                              ));
+                            }
+                          },
+                          style: TextButton.styleFrom(foregroundColor: const Color(0xFFFFC107)),
+                          icon: const Icon(Icons.calendar_today, size: 15),
+                          label: Text('${dueDate.day}/${dueDate.month}/${dueDate.year}'),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: TextButton.icon(
+                          onPressed: () async {
+                            final picked = await showTimePicker(
+                              context: ctx,
+                              initialTime: TimeOfDay.fromDateTime(dueDate),
+                              builder: (c, child) => Theme(
+                                data: ThemeData.dark().copyWith(colorScheme: const ColorScheme.dark(primary: Color(0xFFFFC107))),
+                                child: child!,
+                              ),
+                            );
+                            if (picked != null) {
+                              setDialogState(() => dueDate = dueDate.copyWith(hour: picked.hour, minute: picked.minute));
+                            }
+                          },
+                          style: TextButton.styleFrom(foregroundColor: const Color(0xFFFFC107)),
+                          icon: const Icon(Icons.access_time, size: 15),
+                          label: Text(fmtClock(dueDate)),
+                        ),
                       ),
                     ],
                   ),
@@ -257,34 +309,87 @@ class _TasksTab extends StatelessWidget {
                       Switch(
                         value: alarm,
                         activeThumbColor: const Color(0xFFFFC107),
-                        onChanged: (v) => setDialogState(() => alarm = v),
+                        onChanged: (v) {
+                          setDialogState(() => alarm = v);
+                          // Opting into an alarm is the right moment to ask for
+                          // exact-alarm and full-screen access.
+                          if (v) NotificationService().requestPermissions(askFullScreen: true);
+                        },
                       ),
                     ],
                   ),
+                  if (alarm) ...[
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        const SizedBox(width: 28),
+                        const Text('Remind me', style: TextStyle(color: Colors.white70, fontSize: 13)),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: DropdownButtonHideUnderline(
+                            child: DropdownButton<int>(
+                              value: kLeadOptions.containsKey(lead) ? lead : 0,
+                              isExpanded: true,
+                              dropdownColor: const Color(0xFF19233E),
+                              style: const TextStyle(color: Colors.white, fontSize: 13),
+                              items: kLeadOptions.entries.map((e) => DropdownMenuItem(
+                                value: e.key,
+                                child: Text(e.value),
+                              )).toList(),
+                              onChanged: (v) => setDialogState(() => lead = v ?? 0),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      !willRing
+                          ? 'That time has already passed — the task saves, but no device alert is set.'
+                          : leadWillRing
+                              ? 'Rings ${AppState.whenPhrase(alarmAt)}'
+                              : 'Rings at ${fmtClock(dueDate)} only — the heads-up window has already passed.',
+                      style: TextStyle(
+                        color: willRing ? Colors.white38 : Colors.redAccent,
+                        fontSize: 11.5,
+                      ),
+                    ),
+                  ] else if (!willRing) ...[
+                    const SizedBox(height: 2),
+                    const Text(
+                      'That time has already passed — the task saves, but no device alert is set.',
+                      style: TextStyle(color: Colors.redAccent, fontSize: 11.5),
+                    ),
+                  ],
                 ],
               ),
             ),
           ),
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel', style: TextStyle(color: Colors.white54))),
-            ElevatedButton(
+            FilledButton(
               onPressed: () {
                 if (titleCtrl.text.trim().isEmpty) return;
-                state.addTask(AppTask(
-                  id: state.nextTaskId,
+                state.upsertTask(AppTask(
+                  id: existing?.id ?? state.nextTaskId,
                   title: titleCtrl.text.trim(),
                   description: descCtrl.text.trim(),
                   priority: priority,
+                  status: existing?.status ?? TaskStatus.todo,
                   dueDate: dueDate,
+                  linkedQuoteId: existing?.linkedQuoteId,
+                  projectId: existing?.projectId,
                   alarmEnabled: alarm,
+                  reminderLeadMinutes: alarm ? lead : 0,
                 ));
                 Navigator.pop(ctx);
               },
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFFC107), foregroundColor: Colors.black),
-              child: const Text('Add Task'),
+              style: FilledButton.styleFrom(backgroundColor: const Color(0xFFFFC107), foregroundColor: Colors.black),
+              child: Text(existing == null ? 'Add Task' : 'Save'),
             ),
           ],
-        ),
+          );
+        },
       ),
     );
   }
@@ -308,7 +413,8 @@ class _TasksTab extends StatelessWidget {
 
 class _TaskCard extends StatelessWidget {
   final AppTask task;
-  const _TaskCard({required this.task});
+  final VoidCallback onEdit;
+  const _TaskCard({required this.task, required this.onEdit});
 
   @override
   Widget build(BuildContext context) {
@@ -383,15 +489,26 @@ class _TaskCard extends StatelessWidget {
                         color: isOverdue ? Colors.red : Colors.white38,
                       ),
                       const SizedBox(width: 4),
-                      Text(
-                        _formatDate(task.dueDate),
-                        style: TextStyle(color: isOverdue ? Colors.red : Colors.white38, fontSize: 12),
+                      Flexible(
+                        child: Text(
+                          _scheduleLine(task),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: isOverdue ? Colors.red : Colors.white38,
+                            fontSize: 12,
+                          ),
+                        ),
                       ),
                       if (task.alarmEnabled) ...[
-                        const SizedBox(width: 12),
-                        const Icon(Icons.notifications_active, size: 12, color: Color(0xFFFFC107)),
+                        const SizedBox(width: 6),
+                        Icon(
+                          isDone ? Icons.notifications_off : Icons.alarm,
+                          size: 12,
+                          color: isDone ? Colors.white24 : const Color(0xFFFFC107),
+                        ),
                       ],
-                      const SizedBox(width: 12),
+                      const SizedBox(width: 8),
                       _statusChip(task.status),
                     ],
                   ),
@@ -400,6 +517,13 @@ class _TaskCard extends StatelessWidget {
             ),
 
             // â”€â”€ Status Toggle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            IconButton(
+              onPressed: onEdit,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              icon: const Icon(Icons.edit_outlined, color: Colors.white38, size: 16),
+              tooltip: 'Edit task',
+            ),
             PopupMenuButton<TaskStatus>(
               color: const Color(0xFF19233E),
               icon: const Icon(Icons.more_vert, color: Colors.white38, size: 18),
@@ -459,6 +583,14 @@ class _TaskCard extends StatelessWidget {
     if (diff == -1) return 'Yesterday';
     if (diff < 0) return 'Overdue by ${-diff}d';
     return '${d.day}/${d.month}/${d.year}';
+  }
+
+  String _scheduleLine(AppTask t) {
+    final parts = <String>[_formatDate(t.dueDate), fmtClock(t.dueDate)];
+    if (t.alarmEnabled && t.reminderLeadMinutes > 0) {
+      parts.add('alarm ${t.reminderLeadMinutes}m before');
+    }
+    return parts.join(' · ');
   }
 }
 
@@ -712,7 +844,10 @@ class _ScheduleTabState extends State<_ScheduleTab> {
                     physics: const NeverScrollableScrollPhysics(),
                     itemCount: todayEvents.length,
                     separatorBuilder: (context, index) => const SizedBox(height: 8),
-                    itemBuilder: (ctx, i) => _EventCard(event: todayEvents[i]),
+                    itemBuilder: (ctx, i) => _EventCard(
+                      event: todayEvents[i],
+                      onEdit: () => _showEventDialog(ctx, state, existing: todayEvents[i]),
+                    ),
                   ),
           ],
         ),
@@ -723,7 +858,7 @@ class _ScheduleTabState extends State<_ScheduleTab> {
           right: 0,
           child: FloatingActionButton.extended(
             heroTag: 'event_fab',
-            onPressed: () => _showAddEventDialog(context, state),
+            onPressed: () => _showEventDialog(context, state),
             backgroundColor: const Color(0xFFFFC107),
             foregroundColor: Colors.black,
             icon: const Icon(Icons.add),
@@ -745,14 +880,29 @@ class _ScheduleTabState extends State<_ScheduleTab> {
     return '${days[d.weekday - 1]}, ${months[d.month - 1]} ${d.day}';
   }
 
-  void _showAddEventDialog(BuildContext context, AppState state) {
-    final titleCtrl = TextEditingController();
-    final descCtrl = TextEditingController();
-    DateTime eventDate = _selectedDay;
-    TimeOfDay startTime = const TimeOfDay(hour: 9, minute: 0);
-    TimeOfDay endTime = const TimeOfDay(hour: 10, minute: 0);
-    Color eventColor = const Color(0xFFFFC107);
-    bool alarm = false;
+  void _showEventDialog(BuildContext context, AppState state, {AppEvent? existing}) {
+    final titleCtrl = TextEditingController(text: existing?.title ?? '');
+    final descCtrl = TextEditingController(text: existing?.description ?? '');
+    // _selectedDay is midnight of the browsed day, so a fixed 09:00 start meant
+    // most new events were created already in the past and never armed.
+    DateTime startDate;
+    if (existing != null) {
+      startDate = existing.startTime;
+    } else {
+      final now = DateTime.now();
+      final selectedDay = DateTime(_selectedDay.year, _selectedDay.month, _selectedDay.day);
+      final today = DateTime(now.year, now.month, now.day);
+      startDate = selectedDay.isAfter(today)
+          ? DateTime(selectedDay.year, selectedDay.month, selectedDay.day, 9, 0)
+          : now.add(const Duration(minutes: 10));
+    }
+    DateTime eventDate = DateTime(startDate.year, startDate.month, startDate.day);
+    TimeOfDay startTime = TimeOfDay.fromDateTime(startDate);
+    TimeOfDay endTime = TimeOfDay.fromDateTime(
+        existing?.endTime ?? startDate.add(const Duration(hours: 1)));
+    Color eventColor = existing?.color ?? const Color(0xFFFFC107);
+    bool alarm = existing?.alarmEnabled ?? false;
+    int lead = existing?.reminderLeadMinutes ?? 15;
 
     final colorOptions = [
       const Color(0xFFFFC107),
@@ -766,10 +916,18 @@ class _ScheduleTabState extends State<_ScheduleTab> {
     showDialog(
       context: context,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
+        builder: (ctx, setDialogState) {
+          final start = DateTime(eventDate.year, eventDate.month, eventDate.day, startTime.hour, startTime.minute);
+          final alarmAt = start.subtract(Duration(minutes: lead));
+          final willRing = start.isAfter(DateTime.now());
+          final leadWillRing = alarmAt.isAfter(DateTime.now());
+          return AlertDialog(
           backgroundColor: const Color(0xFF19233E),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: const Text('Add New Event', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          title: Text(
+            existing == null ? 'Add New Event' : 'Edit Event',
+            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          ),
           content: SizedBox(
             width: 420,
             child: SingleChildScrollView(
@@ -881,37 +1039,89 @@ class _ScheduleTabState extends State<_ScheduleTab> {
                       Switch(
                         value: alarm,
                         activeThumbColor: const Color(0xFFFFC107),
-                        onChanged: (v) => setDialogState(() => alarm = v),
+                        onChanged: (v) {
+                          setDialogState(() => alarm = v);
+                          // Opting into an alarm is the right moment to ask for
+                          // exact-alarm and full-screen access.
+                          if (v) NotificationService().requestPermissions(askFullScreen: true);
+                        },
                       ),
                     ],
                   ),
+                  if (alarm) ...[
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        const SizedBox(width: 28),
+                        const Text('Remind me', style: TextStyle(color: Colors.white70, fontSize: 13)),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: DropdownButtonHideUnderline(
+                            child: DropdownButton<int>(
+                              value: kLeadOptions.containsKey(lead) ? lead : 15,
+                              isExpanded: true,
+                              dropdownColor: const Color(0xFF19233E),
+                              style: const TextStyle(color: Colors.white, fontSize: 13),
+                              items: kLeadOptions.entries.map((e) => DropdownMenuItem(
+                                value: e.key,
+                                child: Text(e.value),
+                              )).toList(),
+                              onChanged: (v) => setDialogState(() => lead = v ?? 15),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      !willRing
+                          ? 'This event starts in the past — it saves, but no device alert is set.'
+                          : leadWillRing
+                              ? 'Alerts: ${AppState.whenPhrase(alarmAt)}, then at ${fmtClock(start)}'
+                              : 'Alerts at ${fmtClock(start)} only — the heads-up window has already passed.',
+                      style: TextStyle(
+                        color: willRing ? Colors.white38 : Colors.redAccent,
+                        fontSize: 11.5,
+                      ),
+                    ),
+                  ] else if (!willRing) ...[
+                    // Quiet reminders are still scheduled per event, so a past
+                    // start time matters even with the alarm switch off.
+                    const SizedBox(height: 2),
+                    const Text(
+                      'This event starts in the past — it saves, but no device alert is set.',
+                      style: TextStyle(color: Colors.redAccent, fontSize: 11.5),
+                    ),
+                  ],
                 ],
               ),
             ),
           ),
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel', style: TextStyle(color: Colors.white54))),
-            ElevatedButton(
+            FilledButton(
               onPressed: () {
                 if (titleCtrl.text.trim().isEmpty) return;
-                final start = DateTime(eventDate.year, eventDate.month, eventDate.day, startTime.hour, startTime.minute);
                 final end = DateTime(eventDate.year, eventDate.month, eventDate.day, endTime.hour, endTime.minute);
-                state.addEvent(AppEvent(
-                  id: state.nextEventId,
+                state.upsertEvent(AppEvent(
+                  id: existing?.id ?? state.nextEventId,
                   title: titleCtrl.text.trim(),
                   description: descCtrl.text.trim(),
                   startTime: start,
-                  endTime: end,
+                  // An end clock-time earlier than the start means it runs past midnight.
+                  endTime: end.isAfter(start) ? end : end.add(const Duration(days: 1)),
                   color: eventColor,
                   alarmEnabled: alarm,
+                  reminderLeadMinutes: lead,
                 ));
                 Navigator.pop(ctx);
               },
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFFC107), foregroundColor: Colors.black),
-              child: const Text('Add Event'),
+              style: FilledButton.styleFrom(backgroundColor: const Color(0xFFFFC107), foregroundColor: Colors.black),
+              child: Text(existing == null ? 'Add Event' : 'Save'),
             ),
           ],
-        ),
+          );
+        },
       ),
     );
   }
@@ -935,15 +1145,20 @@ class _ScheduleTabState extends State<_ScheduleTab> {
 
 class _EventCard extends StatelessWidget {
   final AppEvent event;
-  const _EventCard({required this.event});
+  final VoidCallback onEdit;
+  const _EventCard({required this.event, required this.onEdit});
 
   @override
   Widget build(BuildContext context) {
     final state = AppStateProvider.of(context);
+    final now = DateTime.now();
     final duration = event.endTime.difference(event.startTime);
     final hours = duration.inHours;
     final mins = duration.inMinutes % 60;
     final durationStr = hours > 0 ? '${hours}h${mins > 0 ? ' ${mins}m' : ''}' : '${mins}m';
+    final phase = _phase(now);
+    final isLive = !now.isBefore(event.startTime) && now.isBefore(event.endTime);
+    final isEnded = !now.isBefore(event.endTime);
 
     return Card(
       color: const Color(0xFF19233E),
@@ -976,7 +1191,25 @@ class _EventCard extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(event.title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14)),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  event.title,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: isEnded ? Colors.white38 : Colors.white,
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 14,
+                                    decoration: isEnded ? TextDecoration.lineThrough : null,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              _phasePill(phase, isLive, isEnded),
+                            ],
+                          ),
                           if (event.description.isNotEmpty) ...[
                             const SizedBox(height: 3),
                             Text(event.description, style: const TextStyle(color: Colors.white54, fontSize: 12), maxLines: 1, overflow: TextOverflow.ellipsis),
@@ -986,18 +1219,37 @@ class _EventCard extends StatelessWidget {
                             children: [
                               Icon(Icons.access_time, size: 12, color: event.color),
                               const SizedBox(width: 4),
-                              Text(
-                                '${_fmtTime(event.startTime)} â€“ ${_fmtTime(event.endTime)} ($durationStr)',
-                                style: TextStyle(color: event.color, fontSize: 12, fontWeight: FontWeight.w600),
+                              Flexible(
+                                child: Text(
+                                  '${_fmtTime(event.startTime)} – ${_fmtTime(event.endTime)} ($durationStr)',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(color: event.color, fontSize: 12, fontWeight: FontWeight.w600),
+                                ),
                               ),
                               if (event.alarmEnabled) ...[
-                                const SizedBox(width: 10),
-                                const Icon(Icons.notifications_active, size: 12, color: Color(0xFFFFC107)),
+                                const SizedBox(width: 8),
+                                const Icon(Icons.alarm, size: 12, color: Color(0xFFFFC107)),
+                                if (event.reminderLeadMinutes > 0) ...[
+                                  const SizedBox(width: 3),
+                                  Flexible(
+                                    child: Text(
+                                      '-${event.reminderLeadMinutes}m',
+                                      maxLines: 1,
+                                      style: const TextStyle(color: Colors.white38, fontSize: 11),
+                                    ),
+                                  ),
+                                ],
                               ],
                             ],
                           ),
                         ],
                       ),
+                    ),
+                    IconButton(
+                      onPressed: onEdit,
+                      icon: const Icon(Icons.edit_outlined, color: Colors.white24, size: 18),
+                      tooltip: 'Edit event',
                     ),
                     IconButton(
                       onPressed: () => _confirmDelete(context, state),
@@ -1018,6 +1270,38 @@ class _EventCard extends StatelessWidget {
     final m = dt.minute.toString().padLeft(2, '0');
     final ampm = dt.hour >= 12 ? 'PM' : 'AM';
     return '$h:$m $ampm';
+  }
+
+  String _phase(DateTime now) {
+    if (!now.isBefore(event.endTime)) return 'Ended';
+    if (!now.isBefore(event.startTime)) return 'Live now';
+    final until = event.startTime.difference(now);
+    if (until.inDays >= 1) return 'in ${until.inDays}d';
+    if (until.inHours >= 1) return 'in ${until.inHours}h ${until.inMinutes % 60}m';
+    if (until.inMinutes >= 1) return 'in ${until.inMinutes}m';
+    return 'Starting';
+  }
+
+  Widget _phasePill(String label, bool isLive, bool isEnded) {
+    final color = isLive ? const Color(0xFF22C55E) : isEnded ? Colors.white38 : event.color;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (isLive) ...[
+            Icon(Icons.circle, size: 6, color: color),
+            const SizedBox(width: 4),
+          ],
+          Text(label, style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w700)),
+        ],
+      ),
+    );
   }
 
   void _confirmDelete(BuildContext context, AppState state) {

@@ -17,6 +17,9 @@ import '../services/cloud_sync_service.dart';
 import 'quote_editor_page.dart';
 import 'pdf_viewer_page.dart';
 import 'signature_page.dart';
+import '../widgets/money_text.dart';
+import '../widgets/scrollable_panel.dart';
+import '../widgets/send_contact_buttons.dart';
 
 // ─── Design Tokens (Dark-Blue Theme) ──────────────────────────────────────────
 const _surface = Color(0xFF161B26);
@@ -40,11 +43,10 @@ class _QuotesPageState extends State<QuotesPage> {
   String _search = '';
   QuoteSort _sort = QuoteSort.dateDesc;
 
-  final _currencyFmt = NumberFormat.currency(symbol: 'KES ', decimalDigits: 0);
-
   @override
   Widget build(BuildContext context) {
     final appState = AppStateProvider.of(context);
+    final currency = appState.currency;
     final filtered = appState.quotes.where((q) {
       final matchStatus = _filterStatus == null || q.status == _filterStatus;
       final matchSearch = _search.isEmpty ||
@@ -92,9 +94,9 @@ class _QuotesPageState extends State<QuotesPage> {
           scrollDirection: Axis.horizontal,
           child: Row(
             children: [
-              _kpi('Total Quotes', _fmtKpi(totalAmount), Icons.description_outlined, _gold),
+              _kpi('Total Quotes', _fmtKpi(totalAmount, currency), Icons.description_outlined, _gold),
               const SizedBox(width: 12),
-              _kpi('Approved', _fmtKpi(approvedAmount), Icons.check_circle_outline, Colors.green),
+              _kpi('Approved', _fmtKpi(approvedAmount, currency), Icons.check_circle_outline, Colors.green),
               const SizedBox(width: 12),
               _kpi('Pending', '$pendingCount pending', Icons.hourglass_top, Colors.orange),
               const SizedBox(width: 12),
@@ -223,7 +225,7 @@ class _QuotesPageState extends State<QuotesPage> {
                     final quote = filtered[index];
                     return _QuoteCard(
                       quote: quote,
-                      currencyFmt: _currencyFmt,
+                      currency: currency,
                       onTap: () => PdfViewerPage.openQuotePdf(context, quote, appState),
                       onEdit: () => _showQuoteDialog(context, appState, quote: quote),
                       onSignOrShare: () => _showSignOrShareQuoteDialog(context, quote, appState),
@@ -376,7 +378,9 @@ class _QuotesPageState extends State<QuotesPage> {
             Text('Client Review Link — ${quote.id}', style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
           ],
         ),
-        content: Column(
+        content: ScrollablePanel(
+          maxHeightFactor: 0.6,
+          child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -444,7 +448,23 @@ class _QuotesPageState extends State<QuotesPage> {
                 ),
               ],
             ),
+            const SizedBox(height: 14),
+            const Divider(color: _border, height: 1),
+            const SizedBox(height: 10),
+            const Text(
+              'Send directly — the client\'s WhatsApp number or email is saved to their record.',
+              style: TextStyle(color: _white54, fontSize: 11.5),
+            ),
+            const SizedBox(height: 8),
+            SendContactButtons(
+              appState: state,
+              clientId: quote.clientId,
+              clientName: quote.clientName,
+              docLabel: 'Quotation ${quote.id}',
+              url: url,
+            ),
           ],
+          ),
         ),
         actions: [
           TextButton(
@@ -484,7 +504,8 @@ class _QuotesPageState extends State<QuotesPage> {
               maxLines: 4,
               style: const TextStyle(color: Colors.white, fontSize: 12, fontFamily: 'monospace'),
               decoration: InputDecoration(
-                hintText: '{"docId":"...", "signatureData":"..."}',
+                hintText:
+                    'Paste the code the client copied after signing — it carries the signature plus signer name, WhatsApp, device and location.',
                 hintStyle: const TextStyle(color: Colors.white30),
                 filled: true,
                 fillColor: Colors.black26,
@@ -506,6 +527,7 @@ class _QuotesPageState extends State<QuotesPage> {
 
               String sig = text;
               DateTime? signedAt;
+              SignatureMetadata? meta;
               try {
                 final json = jsonDecode(text) as Map<String, dynamic>;
                 if (json['signatureData'] != null) {
@@ -514,9 +536,22 @@ class _QuotesPageState extends State<QuotesPage> {
                 if (json['signedAt'] != null) {
                   signedAt = DateTime.tryParse(json['signedAt'].toString());
                 }
+                String? field(String key) {
+                  final v = json[key];
+                  return v is String && v.trim().isNotEmpty ? v.trim() : null;
+                }
+                if (field('signerName') != null || field('signerDevice') != null) {
+                  meta = SignatureMetadata(
+                    signerName: field('signerName'),
+                    signerPhone: field('signerPhone'),
+                    device: field('signerDevice'),
+                    appVersion: field('signerAppVersion'),
+                    location: field('signerLocation'),
+                  );
+                }
               } catch (_) {}
 
-              state.markQuoteSigned(quote.id, sig, signedAt);
+              state.markQuoteSigned(quote.id, sig, signedAt, meta);
               Navigator.pop(ctx);
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
@@ -706,17 +741,13 @@ class _QuotesPageState extends State<QuotesPage> {
     );
   }
 
-  String _fmtKpi(double v) {
-    if (v >= 1000000) return 'KES ${(v / 1000000).toStringAsFixed(1)}M';
-    if (v >= 1000) return 'KES ${(v / 1000).toStringAsFixed(0)}K';
-    return 'KES ${v.toStringAsFixed(0)}';
-  }
+  String _fmtKpi(double v, String currency) => formatCompactAmount(v, currency);
 }
 
 // ─── Sleek Quote Card ─────────────────────────────────────────────────────────
 class _QuoteCard extends StatelessWidget {
   final Quote quote;
-  final NumberFormat currencyFmt;
+  final String currency;
   final VoidCallback onTap;
   final VoidCallback onEdit;
   final VoidCallback onSignOrShare;
@@ -725,7 +756,7 @@ class _QuoteCard extends StatelessWidget {
 
   const _QuoteCard({
     required this.quote,
-    required this.currencyFmt,
+    required this.currency,
     required this.onTap,
     required this.onEdit,
     required this.onSignOrShare,
@@ -885,11 +916,16 @@ class _QuoteCard extends StatelessWidget {
                 const SizedBox(height: 12),
 
                 // Bottom Row: Total Amount + Quick Actions
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 2,
+                  alignment: WrapAlignment.spaceBetween,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
-                    Text(
-                      currencyFmt.format(q.total),
+                    MoneyText(
+                      formatAmount(q.total, currency),
+                      maxWidth: 220,
+                      alignment: Alignment.centerLeft,
                       style: const TextStyle(
                         color: _gold,
                         fontSize: 18,

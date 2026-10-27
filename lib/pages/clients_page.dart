@@ -398,7 +398,7 @@ class _ClientRow extends StatelessWidget {
                       ),
                     ),
                   ),
-                  // ACTIONS (width:80)
+                  // ACTIONS (width:80) — shrink-wrapped targets so both fit the slot
                   SizedBox(
                     width: 80,
                     child: Row(
@@ -408,11 +408,21 @@ class _ClientRow extends StatelessWidget {
                           onPressed: onEdit,
                           icon: const Icon(Icons.edit_outlined, size: 16, color: Colors.white54),
                           tooltip: 'Edit',
+                          style: IconButton.styleFrom(
+                            padding: EdgeInsets.zero,
+                            minimumSize: const Size(36, 36),
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
                         ),
                         IconButton(
                           onPressed: onDelete,
                           icon: const Icon(Icons.delete_outline, size: 16, color: Colors.redAccent),
                           tooltip: 'Delete',
+                          style: IconButton.styleFrom(
+                            padding: EdgeInsets.zero,
+                            minimumSize: const Size(36, 36),
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
                         ),
                       ],
                     ),

@@ -7,6 +7,7 @@ import "package:flutter/rendering.dart";
 import "../models.dart";
 import "../app_state.dart";
 import "../services/pdf_service.dart";
+import "../services/signer_capture_service.dart";
 import "pdf_viewer_page.dart";
 
 const _cBg      = Color(0xFF0B0E17);
@@ -29,6 +30,33 @@ class _SignaturePageState extends State<SignaturePage> {
   final List<Offset?> _points = [];
   final GlobalKey _canvasKey = GlobalKey();
   bool _saving = false;
+  late final TextEditingController _signerNameCtrl;
+  late final TextEditingController _signerPhoneCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _signerNameCtrl = TextEditingController(text: _clientName);
+    _signerPhoneCtrl = TextEditingController(text: _clientPhone);
+  }
+
+  @override
+  void dispose() {
+    _signerNameCtrl.dispose();
+    _signerPhoneCtrl.dispose();
+    super.dispose();
+  }
+
+  String get _clientPhone {
+    final clientId = widget.quote?.clientId ?? widget.invoice?.clientId ?? '';
+    try {
+      final clients = AppStateProvider.of(context).clients;
+      final match = clients.where((c) => c.id == clientId);
+      return match.isNotEmpty ? match.first.phone : '';
+    } catch (_) {
+      return '';
+    }
+  }
 
   String get _docTitle => widget.quote != null
       ? "Quotation ${widget.quote!.id}"
@@ -115,6 +143,30 @@ class _SignaturePageState extends State<SignaturePage> {
               ),
             ),
             const SizedBox(height: 20),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: _signerField(
+                    'Signed by',
+                    _signerNameCtrl,
+                    Icons.person_outline,
+                    'Full name of the signer',
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _signerField(
+                    'WhatsApp Number',
+                    _signerPhoneCtrl,
+                    Icons.chat_outlined,
+                    'e.g. +254 712 345 678',
+                    keyboardType: TextInputType.phone,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
             Expanded(
               child: RepaintBoundary(
                 key: _canvasKey,
@@ -184,6 +236,45 @@ class _SignaturePageState extends State<SignaturePage> {
     );
   }
 
+  Widget _signerField(String label, TextEditingController ctrl, IconData icon,
+      String hint,
+      {TextInputType keyboardType = TextInputType.text}) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label,
+            style: const TextStyle(
+                color: Colors.white54,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.4)),
+        const SizedBox(height: 6),
+        TextField(
+          controller: ctrl,
+          keyboardType: keyboardType,
+          style: const TextStyle(color: Colors.white, fontSize: 14),
+          decoration: InputDecoration(
+            hintText: hint,
+            hintStyle: const TextStyle(color: Colors.white24, fontSize: 13),
+            prefixIcon: Icon(icon, size: 18, color: _cGold.withValues(alpha: 0.7)),
+            isDense: true,
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            filled: true,
+            fillColor: const Color(0xFF141A26),
+            enabledBorder:
+                OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: const BorderSide(color: _cBorder)),
+            focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: _cGold)),
+          ),
+        ),
+      ],
+    );
+  }
+
   Future<void> _confirmSignature() async {
     setState(() => _saving = true);
     try {
@@ -205,12 +296,17 @@ class _SignaturePageState extends State<SignaturePage> {
 
       if (!mounted) return;
       final appState = AppStateProvider.of(context);
+      final signedAt = DateTime.now();
+      final meta = await SignerCaptureService().collect(
+        signerName: _signerNameCtrl.text.trim(),
+        signerPhone: _signerPhoneCtrl.text.trim(),
+      );
 
       if (widget.quote != null) {
         final q = widget.quote!;
-        appState.markQuoteSigned(q.id, base64Sig);
+        appState.markQuoteSigned(q.id, base64Sig, signedAt, meta);
         q.signatureData = base64Sig;
-        q.signedAt = DateTime.now();
+        q.signedAt = signedAt;
         if (!mounted) return;
         await PdfViewerPage.openDocumentPdf(
           context: context,
@@ -220,9 +316,9 @@ class _SignaturePageState extends State<SignaturePage> {
         );
       } else if (widget.invoice != null) {
         final inv = widget.invoice!;
-        appState.markInvoiceSigned(inv.id, base64Sig);
+        appState.markInvoiceSigned(inv.id, base64Sig, signedAt, meta);
         inv.signatureData = base64Sig;
-        inv.signedAt = DateTime.now();
+        inv.signedAt = signedAt;
         if (!mounted) return;
         await PdfViewerPage.openDocumentPdf(
           context: context,

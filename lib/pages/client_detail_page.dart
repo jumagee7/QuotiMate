@@ -4,6 +4,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:printing/printing.dart';
@@ -17,6 +18,9 @@ import 'enquiry_invoice_page.dart';
 import 'pdf_viewer_page.dart';
 import 'signature_page.dart';
 import 'project_quickbook_page.dart';
+import '../widgets/money_text.dart';
+import '../widgets/scrollable_panel.dart';
+import '../widgets/send_contact_buttons.dart';
 
 const _cSurface = Color(0xFF161B26);
 const _cBorder  = Color(0xFF2A3045);
@@ -34,7 +38,6 @@ class ClientDetailPage extends StatefulWidget {
 
 class _ClientDetailPageState extends State<ClientDetailPage> with SingleTickerProviderStateMixin {
   late TabController _tabController;
-  final _currencyFmt = NumberFormat.currency(symbol: 'KES ', decimalDigits: 0);
   final _dateFmt = DateFormat('dd MMM yyyy');
 
   @override
@@ -129,7 +132,7 @@ class _ClientDetailPageState extends State<ClientDetailPage> with SingleTickerPr
                                   children: [
                                     const Icon(Icons.phone_outlined, size: 14, color: _cW38),
                                     const SizedBox(width: 4),
-                                    Text(client.phone, style: const TextStyle(color: _cW70, fontSize: 12)),
+                                    Flexible(child: Text(client.phone, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: _cW70, fontSize: 12))),
                                   ],
                                 ),
                               if (client.email.isNotEmpty)
@@ -138,7 +141,7 @@ class _ClientDetailPageState extends State<ClientDetailPage> with SingleTickerPr
                                   children: [
                                     const Icon(Icons.email_outlined, size: 14, color: _cW38),
                                     const SizedBox(width: 4),
-                                    Text(client.email, style: const TextStyle(color: _cW70, fontSize: 12)),
+                                    Flexible(child: Text(client.email, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: _cW70, fontSize: 12))),
                                   ],
                                 ),
                               if (client.address.isNotEmpty)
@@ -147,7 +150,7 @@ class _ClientDetailPageState extends State<ClientDetailPage> with SingleTickerPr
                                   children: [
                                     const Icon(Icons.location_on_outlined, size: 14, color: _cW38),
                                     const SizedBox(width: 4),
-                                    Text(client.address, style: const TextStyle(color: _cW70, fontSize: 12)),
+                                    Flexible(child: Text(client.address, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: _cW70, fontSize: 12))),
                                   ],
                                 ),
                             ],
@@ -178,6 +181,8 @@ class _ClientDetailPageState extends State<ClientDetailPage> with SingleTickerPr
             color: const Color(0xFF0F162C),
             child: TabBar(
               controller: _tabController,
+              isScrollable: true,
+              tabAlignment: TabAlignment.start,
               indicatorColor: _cGold,
               labelColor: _cGold,
               unselectedLabelColor: _cW70,
@@ -286,11 +291,14 @@ class _ClientDetailPageState extends State<ClientDetailPage> with SingleTickerPr
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(
-                      q.id,
-                      style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
+                    Expanded(
+                      child: Text(
+                        q.id,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
+                      ),
                     ),
                     Row(
                       mainAxisSize: MainAxisSize.min,
@@ -335,7 +343,7 @@ class _ClientDetailPageState extends State<ClientDetailPage> with SingleTickerPr
                   children: [
                     const Icon(Icons.calendar_today_outlined, color: _cW38, size: 12),
                     const SizedBox(width: 4),
-                    Text(_dateFmt.format(q.date), style: const TextStyle(color: _cW70, fontSize: 12)),
+                    Flexible(child: Text(_dateFmt.format(q.date), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: _cW70, fontSize: 12))),
                     const SizedBox(width: 14),
                     const Icon(Icons.event_available_outlined, color: _cW38, size: 12),
                     const SizedBox(width: 4),
@@ -343,11 +351,16 @@ class _ClientDetailPageState extends State<ClientDetailPage> with SingleTickerPr
                   ],
                 ),
                 const SizedBox(height: 10),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 2,
+                  alignment: WrapAlignment.spaceBetween,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
-                    Text(
-                      _currencyFmt.format(q.total),
+                    MoneyText(
+                      formatAmount(q.total, appState.currency),
+                      maxWidth: 200,
+                      alignment: Alignment.centerLeft,
                       style: const TextStyle(color: _cGold, fontSize: 16, fontWeight: FontWeight.bold),
                     ),
                     Row(
@@ -428,11 +441,14 @@ class _ClientDetailPageState extends State<ClientDetailPage> with SingleTickerPr
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(
-                      inv.id,
-                      style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
+                    Expanded(
+                      child: Text(
+                        inv.id,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
+                      ),
                     ),
                     Row(
                       mainAxisSize: MainAxisSize.min,
@@ -477,7 +493,7 @@ class _ClientDetailPageState extends State<ClientDetailPage> with SingleTickerPr
                   children: [
                     const Icon(Icons.calendar_today_outlined, color: _cW38, size: 12),
                     const SizedBox(width: 4),
-                    Text(_dateFmt.format(inv.date), style: const TextStyle(color: _cW70, fontSize: 12)),
+                    Flexible(child: Text(_dateFmt.format(inv.date), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: _cW70, fontSize: 12))),
                     const SizedBox(width: 14),
                     const Icon(Icons.event_available_outlined, color: _cW38, size: 12),
                     const SizedBox(width: 4),
@@ -485,11 +501,16 @@ class _ClientDetailPageState extends State<ClientDetailPage> with SingleTickerPr
                   ],
                 ),
                 const SizedBox(height: 10),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 2,
+                  alignment: WrapAlignment.spaceBetween,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
-                    Text(
-                      _currencyFmt.format(inv.amount),
+                    MoneyText(
+                      formatAmount(inv.amount, appState.currency),
+                      maxWidth: 200,
+                      alignment: Alignment.centerLeft,
                       style: const TextStyle(color: Color(0xFF34D399), fontSize: 16, fontWeight: FontWeight.bold),
                     ),
                     Row(
@@ -598,44 +619,50 @@ class _ClientDetailPageState extends State<ClientDetailPage> with SingleTickerPr
                         children: [
                           const Icon(Icons.place_outlined, size: 12, color: _cW38),
                           const SizedBox(width: 4),
-                          Text(p.location, style: const TextStyle(color: _cW70, fontSize: 12)),
+                          Flexible(child: Text(p.location, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: _cW70, fontSize: 12))),
                         ],
                       ),
                     ],
                     const SizedBox(height: 12),
                     Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text('BUDGET', style: TextStyle(color: _cW38, fontSize: 10, fontWeight: FontWeight.w600)),
-                            Text(_currencyFmt.format(p.budget), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
-                          ],
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text('BUDGET', style: TextStyle(color: _cW38, fontSize: 10, fontWeight: FontWeight.w600)),
+                              MoneyText(formatAmount(p.budget, appState.currency), maxWidth: 108, alignment: Alignment.centerLeft, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                            ],
+                          ),
                         ),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text('COLLECTED', style: TextStyle(color: _cW38, fontSize: 10, fontWeight: FontWeight.w600)),
-                            Text(_currencyFmt.format(collected), style: const TextStyle(color: Color(0xFF34D399), fontWeight: FontWeight.bold, fontSize: 13)),
-                          ],
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text('COLLECTED', style: TextStyle(color: _cW38, fontSize: 10, fontWeight: FontWeight.w600)),
+                              MoneyText(formatAmount(collected, appState.currency), maxWidth: 108, alignment: Alignment.centerLeft, style: const TextStyle(color: Color(0xFF34D399), fontWeight: FontWeight.bold, fontSize: 13)),
+                            ],
+                          ),
                         ),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text('PROFIT', style: TextStyle(color: _cW38, fontSize: 10, fontWeight: FontWeight.w600)),
-                            Text(
-                              _currencyFmt.format(profit),
-                              style: TextStyle(
-                                color: profit >= 0 ? const Color(0xFF34D399) : Colors.redAccent,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 13,
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              const Text('PROFIT', style: TextStyle(color: _cW38, fontSize: 10, fontWeight: FontWeight.w600)),
+                              MoneyText(
+                                formatAmount(profit, appState.currency),
+                                maxWidth: 108,
+                                style: TextStyle(
+                                  color: profit >= 0 ? const Color(0xFF34D399) : Colors.redAccent,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13,
                               ),
                             ),
                           ],
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
+                  ),
                   ],
                 ),
               ),
@@ -820,7 +847,9 @@ class _ClientDetailPageState extends State<ClientDetailPage> with SingleTickerPr
             ),
           ],
         ),
-        content: Column(
+        content: ScrollablePanel(
+          maxHeightFactor: 0.6,
+          child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -871,7 +900,23 @@ class _ClientDetailPageState extends State<ClientDetailPage> with SingleTickerPr
                 },
               ),
             ),
+            const SizedBox(height: 14),
+            const Divider(color: _cBorder, height: 1),
+            const SizedBox(height: 10),
+            const Text(
+              'Send directly — the client\'s WhatsApp number or email is saved to their record.',
+              style: TextStyle(color: _cW38, fontSize: 11.5),
+            ),
+            const SizedBox(height: 8),
+            SendContactButtons(
+              appState: state,
+              clientId: quote.clientId,
+              clientName: quote.clientName,
+              docLabel: 'Quotation ${quote.id}',
+              url: url,
+            ),
           ],
+          ),
         ),
         actions: [
           TextButton(
@@ -1012,7 +1057,9 @@ class _ClientDetailPageState extends State<ClientDetailPage> with SingleTickerPr
             ),
           ],
         ),
-        content: Column(
+        content: ScrollablePanel(
+          maxHeightFactor: 0.6,
+          child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -1063,7 +1110,23 @@ class _ClientDetailPageState extends State<ClientDetailPage> with SingleTickerPr
                 },
               ),
             ),
+            const SizedBox(height: 14),
+            const Divider(color: _cBorder, height: 1),
+            const SizedBox(height: 10),
+            const Text(
+              'Send directly — the client\'s WhatsApp number or email is saved to their record.',
+              style: TextStyle(color: _cW38, fontSize: 11.5),
+            ),
+            const SizedBox(height: 8),
+            SendContactButtons(
+              appState: state,
+              clientId: invoice.clientId,
+              clientName: invoice.clientName,
+              docLabel: 'Invoice ${invoice.id}',
+              url: url,
+            ),
           ],
+          ),
         ),
         actions: [
           TextButton(
@@ -1182,14 +1245,24 @@ class _ClientDetailPageState extends State<ClientDetailPage> with SingleTickerPr
     );
   }
 
-  Widget _dialogField(String label, TextEditingController ctrl) {
+  Widget _dialogField(
+    String label,
+    TextEditingController ctrl, {
+    List<TextInputFormatter>? inputFormatters,
+    String? prefixText,
+  }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: TextField(
         controller: ctrl,
+        inputFormatters: inputFormatters,
+        keyboardType: inputFormatters == null
+            ? TextInputType.text
+            : const TextInputType.numberWithOptions(decimal: true),
         style: const TextStyle(color: Colors.white, fontSize: 13),
         decoration: InputDecoration(
           labelText: label,
+          prefixText: prefixText,
           labelStyle: const TextStyle(color: _cW70, fontSize: 12),
           filled: true,
           fillColor: const Color(0xFF0F162C),
@@ -1216,7 +1289,9 @@ class _ClientDetailPageState extends State<ClientDetailPage> with SingleTickerPr
           mainAxisSize: MainAxisSize.min,
           children: [
             _dialogField('Project Title', nameCtrl),
-            _dialogField('Budget (KES)', budgetCtrl),
+            _dialogField('Budget (${appState.currency})', budgetCtrl,
+                inputFormatters: moneyInputFormatters(),
+                prefixText: currencyPrefix(appState.currency)),
             _dialogField('Location / Site', locCtrl),
           ],
         ),
@@ -1227,11 +1302,12 @@ class _ClientDetailPageState extends State<ClientDetailPage> with SingleTickerPr
               if (nameCtrl.text.trim().isEmpty) return;
               final p = Project(
                 id: 'PRJ-${DateTime.now().millisecondsSinceEpoch.toString().substring(7)}',
+                number: appState.nextProjectNumber,
                 name: nameCtrl.text.trim(),
                 clientId: client.id,
                 clientName: client.name,
                 startDate: DateTime.now(),
-                budget: double.tryParse(budgetCtrl.text.trim()) ?? 0.0,
+                budget: parseMoney(budgetCtrl.text) ?? 0.0,
                 location: locCtrl.text.trim(),
                 createdAt: DateTime.now(),
               );
