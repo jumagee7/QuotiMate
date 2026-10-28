@@ -1,16 +1,19 @@
 package com.majumaink.quotimate
 
+import android.app.KeyguardManager
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import android.provider.MediaStore
 import android.provider.Settings
+import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -19,10 +22,50 @@ import java.io.File
 class MainActivity : FlutterActivity() {
     private val CHANNEL = "com.majumaink.quotimate/device_settings"
 
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        applyLockScreenMode(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        applyLockScreenMode(intent)
+    }
+
+    /**
+     * Only a ringing alarm may draw over the keyguard. Every other launch
+     * clears the flags so app content stays behind the lock screen.
+     */
+    private fun applyLockScreenMode(intent: Intent?) {
+        val payload = intent?.getStringExtra("payload")
+        setOverLockScreen(payload?.endsWith(":alarm") == true)
+    }
+
+    private fun setOverLockScreen(enabled: Boolean) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(enabled)
+            setTurnScreenOn(enabled)
+        } else {
+            @Suppress("DEPRECATION")
+            val flags = WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+            if (enabled) window.addFlags(flags) else window.clearFlags(flags)
+        }
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
+                "clearAlarmOverlay" -> {
+                    setOverLockScreen(false)
+                    val keyguard = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+                    // Still locked means the alarm summary was the only thing
+                    // shown; close back to the keyguard rather than the app.
+                    if (keyguard.isKeyguardLocked) finishAndRemoveTask()
+                    result.success(true)
+                }
                 "isIgnoringBatteryOptimizations" -> {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager

@@ -489,6 +489,17 @@ class NotificationService {
     }
   }
 
+  /// Ends the over-lock-screen mode entered by a ringing alarm. If the phone is
+  /// still locked, the app returns to the keyguard instead of staying visible.
+  Future<void> leaveAlarmLockScreen() async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _deviceChannel.invokeMethod('clearAlarmOverlay');
+    } catch (e) {
+      debugPrint('Failed to leave alarm lock-screen mode: $e');
+    }
+  }
+
   /// Returns true if battery optimization is disabled for this app.
   Future<bool> isIgnoringBatteryOptimizations() async {
     if (!Platform.isAndroid) return true;

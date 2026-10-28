@@ -29,16 +29,20 @@ class QuotiMateShell extends StatefulWidget {
   State<QuotiMateShell> createState() => _QuotiMateShellState();
 }
 
-class _QuotiMateShellState extends State<QuotiMateShell> {
+class _QuotiMateShellState extends State<QuotiMateShell> with WidgetsBindingObserver {
   bool _collapsed = false;
   int _selectedNav = 0;
   String _appVersion = '';
+  String _greeting = '';
+  Timer? _greetingTimer;
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   StreamSubscription<String>? _notificationTapSub;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _startGreetingClock();
     // Tapping an alarm acknowledges it; other alerts open Schedule.
     _notificationTapSub = NotificationService().onNotificationTap.listen(_handleNotificationTap);
     final pending = NotificationService().takePendingTap();
@@ -55,8 +59,50 @@ class _QuotiMateShellState extends State<QuotiMateShell> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _greetingTimer?.cancel();
     _notificationTapSub?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Timers can be suspended while backgrounded, so re-sync on return.
+    if (state == AppLifecycleState.resumed) _refreshGreeting();
+  }
+
+  static String _greetingFor(DateTime now) {
+    if (now.hour < 12) return 'Good morning';
+    if (now.hour < 17) return 'Good afternoon';
+    return 'Good evening';
+  }
+
+  static Duration _untilGreetingChanges(DateTime now) {
+    final next = now.hour < 12
+        ? DateTime(now.year, now.month, now.day, 12)
+        : now.hour < 17
+            ? DateTime(now.year, now.month, now.day, 17)
+            : DateTime(now.year, now.month, now.day + 1);
+    return next.difference(now) + const Duration(seconds: 1);
+  }
+
+  void _startGreetingClock() {
+    final now = DateTime.now();
+    _greeting = _greetingFor(now);
+    _scheduleGreetingRefresh(now);
+  }
+
+  void _refreshGreeting() {
+    if (!mounted) return;
+    final now = DateTime.now();
+    final text = _greetingFor(now);
+    if (text != _greeting) setState(() => _greeting = text);
+    _scheduleGreetingRefresh(now);
+  }
+
+  void _scheduleGreetingRefresh(DateTime now) {
+    _greetingTimer?.cancel();
+    _greetingTimer = Timer(_untilGreetingChanges(now), _refreshGreeting);
   }
 
   Future<void> _handleNotificationTap(String payload) async {
@@ -88,6 +134,9 @@ class _QuotiMateShellState extends State<QuotiMateShell> {
             ),
           ),
         );
+        // The alarm launch is the only time the app covers the keyguard; drop
+        // that once the summary is dismissed so the app sits behind the lock.
+        await NotificationService().leaveAlarmLockScreen();
         return;
       }
     }
@@ -353,14 +402,8 @@ class _QuotiMateShellState extends State<QuotiMateShell> {
   String _getPageTitle(int idx) {
     switch (idx) {
       case 0:
-        final hour = DateTime.now().hour;
-        final greeting = hour < 12
-            ? 'Good morning'
-            : hour < 17
-                ? 'Good afternoon'
-                : 'Good evening';
         final name = AppStateProvider.of(context).userName.trim();
-        return name.isNotEmpty ? '$greeting, $name' : greeting;
+        return name.isNotEmpty ? '$_greeting, $name' : _greeting;
       case 1: return 'Quotes Management';
       case 2: return 'Clients Directory';
       case 3: return 'Products & Services';

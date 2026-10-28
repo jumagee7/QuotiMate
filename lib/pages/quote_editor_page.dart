@@ -13,6 +13,7 @@ import '../services/pdf_service.dart';
 import '../services/groq_service.dart';
 import '../widgets/money_text.dart';
 import 'pdf_viewer_page.dart';
+import 'quote_sign_share_sheet.dart';
 
 // Entry point — call this instead of showDialog
 Future<void> openQuoteEditorPage(
@@ -76,8 +77,8 @@ class _QuoteEditorPageState extends State<QuoteEditorPage> {
         id: c.id, name: c.name, labourInput: c.labourInput,
         showSubtotals: c.showSubtotals,
         items: c.items.map((i) => QuoteItem(
-          productId: i.productId, name: i.name, qty: i.qty,
-          unitPrice: i.unitPrice, unit: i.unit,
+          productId: i.productId, name: i.name, description: i.description,
+          qty: i.qty, unitPrice: i.unitPrice, unit: i.unit,
         )).toList(),
       )).toList();
       // Pre-fill client name
@@ -142,6 +143,12 @@ class _QuoteEditorPageState extends State<QuoteEditorPage> {
         title: Text(isEdit ? 'Edit Quote' : 'New Quote',
           style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 17)),
         actions: [
+          if (isEdit)
+            IconButton(
+              icon: const Icon(Icons.draw_outlined, color: _gold),
+              tooltip: 'Client Review & Signature',
+              onPressed: _openSignShareSheet,
+            ),
           if (_subtotal > 0) ...[
             IconButton(
               icon: const Icon(Icons.picture_as_pdf, color: _gold),
@@ -2078,31 +2085,78 @@ class _QuoteEditorPageState extends State<QuoteEditorPage> {
     return newClient;
   }
 
+  /// Persists the on-screen edits before the signing flow, so review links,
+  /// PDFs and signatures all use the content the user is looking at.
+  void _openSignShareSheet() {
+    final quote = widget.quote;
+    if (quote == null) return;
+    final typedName = _clientNameCtrl.text.trim();
+    final client = widget.appState.clients
+        .where((c) =>
+            c.id == _clientId ||
+            (typedName.isNotEmpty &&
+                c.name.toLowerCase() == typedName.toLowerCase()))
+        .firstOrNull;
+    quote.clientId = client?.id ?? _clientId ?? quote.clientId;
+    quote.clientName = typedName.isNotEmpty ? typedName : quote.clientName;
+    quote.status = _status;
+    quote.notes = _notes;
+    quote.labourInput = _labourInput;
+    quote.categories = _categories;
+    quote.vatPercent = widget.appState.defaultVatPercent;
+    widget.appState.updateQuote(quote);
+    showQuoteSignShareSheet(context, quote, widget.appState);
+  }
+
   void _previewPdf() {
+    final base = widget.quote;
+    final typedName = _clientNameCtrl.text.trim();
     final clientName = widget.appState.clients
-        .where((c) => c.id == _clientId)
-        .firstOrNull
-        ?.name ?? 'Customer';
+            .where((c) => c.id == _clientId)
+            .firstOrNull
+            ?.name ??
+        (typedName.isNotEmpty ? typedName : base?.clientName ?? 'Customer');
 
     final tempQuote = Quote(
-      id: widget.quote?.id ?? 'DRAFT',
-      clientId: _clientId ?? '',
+      id: base?.id ?? 'DRAFT',
+      clientId: _clientId ?? base?.clientId ?? '',
       clientName: clientName,
       categories: _categories,
       status: _status,
-      date: widget.quote?.date ?? DateTime.now(),
-      expiryDate: widget.quote?.expiryDate ??
+      date: base?.date ?? DateTime.now(),
+      expiryDate: base?.expiryDate ??
           DateTime.now().add(Duration(days: widget.appState.defaultExpiryDays)),
       notes: _notes,
+      isPinned: base?.isPinned ?? false,
       labourInput: _labourInput,
       vatPercent: widget.appState.defaultVatPercent,
+      projectId: base?.projectId,
+      projectName: base?.projectName,
+      signatureData: base?.signatureData,
+      signedAt: base?.signedAt,
+      signerName: base?.signerName,
+      signerDevice: base?.signerDevice,
+      signerAppVersion: base?.signerAppVersion,
+      signerLocation: base?.signerLocation,
+      signerPhone: base?.signerPhone,
+      shareToken: base?.shareToken,
     );
+
+    final isSigned =
+        tempQuote.signatureData != null && tempQuote.signatureData!.isNotEmpty;
 
     PdfViewerPage.openDocumentPdf(
       context: context,
       title: 'Quotation ${tempQuote.id}',
       filename: 'Quotation_${tempQuote.id}.pdf',
-      buildPdf: (format) => PdfService.generateQuotePdf(tempQuote, widget.appState),
+      buildPdf: (format) => isSigned
+          ? PdfService.generateSignedQuotePdf(
+              tempQuote,
+              widget.appState,
+              base64Decode(tempQuote.signatureData!),
+              tempQuote.signedAt ?? DateTime.now(),
+            )
+          : PdfService.generateQuotePdf(tempQuote, widget.appState),
     );
   }
 }
