@@ -184,40 +184,69 @@ class _UpdatePromptDialogState extends State<UpdatePromptDialog> with WidgetsBin
   }
 
   void _close() {
-    _cancelToken?.cancel();
+    if (_busy) {
+      // Cancel the in-flight download, then let the stage reset close the dialog.
+      _cancelToken?.cancel();
+      return;
+    }
     Navigator.of(context).pop();
   }
 
   @override
   Widget build(BuildContext context) {
+    // While downloading, wrap with a modal barrier so the user cannot tap
+    // anything behind the dialog. Outside that stage the dialog is a normal
+    // dismissible sheet.
+    final dialog = Dialog(
+      backgroundColor: _surface,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(18),
+        side: const BorderSide(color: _border),
+      ),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 460),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _header(),
+              const SizedBox(height: 16),
+              ..._bodyForStage(),
+            ],
+          ),
+        ),
+      ),
+    );
+
     return PopScope(
+      // Back gesture is always blocked while downloading so the user must
+      // explicitly tap "Cancel download" to abort.
       canPop: !_busy,
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) _cancelToken?.cancel();
       },
-      child: Dialog(
-        backgroundColor: _surface,
-        insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(18),
-          side: const BorderSide(color: _border),
-        ),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 460),
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
+      child: _busy
+          // Stack a full-screen absorber behind the dialog so touches on the
+          // scrim are eaten and nothing underneath receives them.
+          ? Stack(
               children: [
-                _header(),
-                const SizedBox(height: 16),
-                ..._bodyForStage(),
+                // Solid barrier — absorbs all taps outside the dialog.
+                const Positioned.fill(
+                  child: AbsorbPointer(
+                    absorbing: true,
+                    child: ModalBarrier(
+                      dismissible: false,
+                      color: Color(0xAA000000),
+                    ),
+                  ),
+                ),
+                Center(child: dialog),
               ],
-            ),
-          ),
-        ),
-      ),
+            )
+          : dialog,
     );
   }
 

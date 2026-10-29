@@ -79,7 +79,7 @@ class _UpdateBannerState extends State<UpdateBanner> with WidgetsBindingObserver
     if (release == null) return;
     await showDialog<void>(
       context: context,
-      barrierDismissible: true,
+      barrierDismissible: false,
       builder: (_) => UpdatePromptDialog(
         release: release,
         installedVersion: _installed,

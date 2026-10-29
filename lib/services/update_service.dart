@@ -203,13 +203,17 @@ class UpdateService {
         final percent = (fraction * 100).round();
         if (percent != lastShown) {
           lastShown = percent;
-          if (percent != lastNotif && percent % 5 == 0) {
+          // Update the system notification every 2% to keep it visibly moving.
+          // We await here intentionally — firing hundreds of unawaited show()
+          // calls floods the channel and Android drops most of them, making the
+          // bar look frozen. One awaited call per 2% is cheap and reliable.
+          if (percent != lastNotif && percent % 2 == 0) {
             lastNotif = percent;
-            unawaited(notifications.showDownloadProgress(
+            await notifications.showDownloadProgress(
               id: _downloadNotifId,
               filename: safeName,
               progress: percent,
-            ));
+            );
           }
         }
       }

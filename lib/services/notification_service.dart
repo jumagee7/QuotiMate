@@ -578,9 +578,6 @@ class NotificationService {
     );
 
     if (result.armed) {
-      if (result.detail == 'inexact') {
-        return 'WARNING: Android only allowed an inexact alarm (delayed by battery management). Check Alarms & Reminders in Settings.';
-      }
       return 'Armed for $seconds seconds! Minimize QuotiMate or lock your screen now to verify.';
     } else {
       return 'Failed to arm alert: ${result.detail ?? result.status.name}';
@@ -609,6 +606,8 @@ class NotificationService {
   }
 
   /// Shows or updates a download progress bar notification.
+  /// Called frequently during download — uses `onlyAlertOnce: true` so Android
+  /// updates the existing bar silently without re-alerting each time.
   Future<void> showDownloadProgress({
     required int id,
     required String filename,
@@ -624,6 +623,9 @@ class NotificationService {
         channelDescription: 'APK update download progress',
         importance: Importance.low,
         priority: Priority.low,
+        // CRITICAL: must be true so Android updates the existing notification
+        // bar in-place instead of posting a new one each call. Without this
+        // the system throttles rapid show() calls and the bar appears frozen.
         onlyAlertOnce: true,
         showProgress: true,
         maxProgress: 100,
@@ -633,6 +635,9 @@ class NotificationService {
         icon: _smallIcon,
         enableVibration: false,
         playSound: false,
+        // Silence the heads-up on every update — only low importance matters
+        // but belt-and-suspenders prevents any sound/vibration.
+        enableLights: false,
       );
       await _localNotifications.show(
         id: id,
@@ -738,10 +743,7 @@ class NotificationService {
   /// targets; a rejection is more informative than "everything was in the past".
   ArmResult _combine(List<ArmResult> results) {
     final armed = results.where((r) => r.armed).toList();
-    if (armed.isNotEmpty) {
-      // Keep any "only got inexact" detail from the strongest queued alert.
-      return armed.firstWhere((r) => r.detail == null, orElse: () => armed.first);
-    }
+    if (armed.isNotEmpty) return armed.first;
     final rejected = results.where((r) => r.status == ArmStatus.rejected).toList();
     if (rejected.isNotEmpty) {
       return ArmResult(ArmStatus.rejected, detail: rejected.first.detail);
@@ -849,12 +851,23 @@ class NotificationService {
     // reminders and lead-time heads-ups keep the plain payload.
     final resolvedPayload = alarm && buzz ? '$payload:alarm' : payload;
 
-    // alarmClock is exempt from Doze. exactAllowWhileIdle still fires with the
-    // screen off. Inexact is NOT treated as success — OEM idle modes drop it,
-    // which looks exactly like "alerts only work while the app is open".
+    // alarmClock is exempt from Doze and is the only mode that reliably fires
+    // on OEM devices (Samsung, Xiaomi, Huawei) while the screen is off.
+    // exactAllowWhileIdle is the fallback for devices where alarmClock is
+    // unavailable. inexactAllowWhileIdle is NOT used — on OEM battery savers
+    // it fires only when the screen turns on, which is indistinguishable from
+    // "notification fired when app came to focus", which is the exact bug we
+    // are fixing. Better to reject loudly and ask the user to grant the
+    // permission than to silently schedule something that won't work.
     if (Platform.isAndroid) {
       final exact = await canScheduleExactAlarms();
       if (!exact) {
+        // The permission is missing. Open the system settings screen and
+        // return a clear rejection so the caller can surface it to the user.
+        // Do NOT fall through to zonedSchedule — scheduling without exact
+        // alarm permission produces an inexact alarm that only fires when the
+        // screen wakes up, making it appear to work only when the app is open.
+        debugPrint('Exact alarm permission denied for $id$suffix — rejecting schedule');
         try {
           await _localNotifications
               .resolvePlatformSpecificImplementation<
@@ -863,17 +876,19 @@ class NotificationService {
         } catch (e) {
           debugPrint('requestExactAlarmsPermission failed: $e');
         }
+        _lastError = 'SCHEDULE_EXACT_ALARM permission denied';
+        return const ArmResult(
+          ArmStatus.rejected,
+          detail: 'ACTION NEEDED: open Settings → Special app access → '
+              'Alarms & reminders and enable QuotiMate.',
+        );
       }
     }
 
+    // Only try exact modes. Inexact is intentionally excluded — see comment above.
     final modes = <AndroidScheduleMode>[
-      AndroidScheduleMode.alarmClock,
-      AndroidScheduleMode.exactAllowWhileIdle,
-      // Delivering late is still better than not delivering at all: if the
-      // device refuses both exact modes (Alarms & reminders revoked, some
-      // OEMs), an inexact alarm still posts while the app is backgrounded or
-      // killed instead of leaving the user with a silent schedule.
-      AndroidScheduleMode.inexactAllowWhileIdle,
+      AndroidScheduleMode.alarmClock,          // Doze-exempt, shows clock icon
+      AndroidScheduleMode.exactAllowWhileIdle, // Exact even in Doze, no clock icon
     ];
 
     Object? lastFailure;
@@ -906,7 +921,7 @@ class NotificationService {
     return ArmResult(
       ArmStatus.rejected,
       detail: lastFailure == null
-          ? 'Android denied an exact alarm. Enable Alarms & Reminders for QuotiMate.'
+          ? 'Android denied the alarm. Enable "Alarms & reminders" for QuotiMate in Settings.'
           : '$lastFailure',
     );
   }

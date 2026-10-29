@@ -104,7 +104,9 @@ class _SettingsPageState extends State<SettingsPage> {
     if (!mounted) return;
     await showDialog<void>(
       context: context,
-      barrierDismissible: true,
+      // Never allow the barrier tap to close the dialog — the dialog itself
+      // manages dismissibility based on whether a download is in progress.
+      barrierDismissible: false,
       builder: (_) => UpdatePromptDialog(
         release: release,
         installedVersion: installed,
