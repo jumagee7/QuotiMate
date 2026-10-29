@@ -49,6 +49,9 @@ void main() async {
 
   // Request the Android 13+ notification permission after the first frame so
   // the system dialog reliably shows with the app in the foreground.
+  // requestPermissions() also auto-requests battery optimization exclusion,
+  // which is the primary reason background alarms are silently dropped on
+  // OEM devices (Samsung One UI, Huawei EMUI/HarmonyOS, Xiaomi MIUI, etc.).
   WidgetsBinding.instance.addPostFrameCallback((_) {
     NotificationService().requestPermissions();
   });

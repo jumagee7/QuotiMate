@@ -778,6 +778,10 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     _checkScheduleStates();
     syncAwaitingSignatures();
     _rescheduleAllNotifications();
+    // Re-request battery optimization exclusion silently on resume — if the user
+    // cleared it from Settings, this reclaims it. The system only shows a dialog
+    // when the permission is absent; if already excluded this is a no-op.
+    NotificationService().requestPermissions();
   }
 
   void _baselineScheduleStates() {

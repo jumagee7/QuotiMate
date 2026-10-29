@@ -9,8 +9,11 @@
     <!-- Required for flutter_local_notifications to spin up a foreground service
          that keeps the alarm alive while the app is in the background/killed. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
-    <!-- Android 14+ requires a foreground-service type declaration. -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
+    <!-- Android 14+ requires the foreground-service type to be declared as a
+         permission AND on the <service> tag. Only specialUse is declared on the
+         service, so FOREGROUND_SERVICE_DATA_SYNC must NOT be listed here —
+         a type mismatch causes a SecurityException on Android 14+ that silently
+         kills the foreground service and drops every background alarm. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
@@ -73,8 +76,13 @@
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED"/>
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
+                <!-- HTC fast boot -->
                 <action android:name="android.intent.action.QUICKBOOT_POWERON" />
                 <action android:name="com.htc.intent.action.QUICKBOOT_POWERON"/>
+                <!-- Samsung locked-boot (user-encrypted storage still unavailable
+                     here, but the receiver must register to avoid missing later
+                     BOOT_COMPLETED on some One UI builds). -->
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED"/>
             </intent-filter>
         </receiver>
         <service

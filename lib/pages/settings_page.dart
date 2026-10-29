@@ -443,6 +443,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   final troubled = summary.contains('BLOCKED') ||
                       summary.contains('DEGRADED') ||
                       summary.contains('PLUGIN OFFLINE');
+                  final batteryIssue = summary.contains('battery optimization active');
                   appState.pushNotification(
                     key: 'n_diag_${DateTime.now().millisecondsSinceEpoch}',
                     title: 'Alert access check',
@@ -458,6 +459,11 @@ class _SettingsPageState extends State<SettingsPage> {
                     // it instead of silently re-requesting.
                     await service.openNotificationSettings();
                     showToast('Turn ON notifications for QuotiMate');
+                    return;
+                  }
+                  if (batteryIssue) {
+                    await service.requestIgnoreBatteryOptimizations();
+                    showToast('Exclude QuotiMate from battery optimization for reliable alarms');
                     return;
                   }
                   if (troubled) {

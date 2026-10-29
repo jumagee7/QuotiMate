@@ -275,6 +275,23 @@ class NotificationService {
         if (!_permissionsGranted) {
           debugPrint('WARNING: Notifications may not work without proper permissions');
         }
+
+        // Auto-request battery optimization exclusion on the same call so the
+        // user does not need to manually visit Settings. On most OEMs (Samsung,
+        // Huawei, Xiaomi, Oppo) battery optimisation is the primary reason
+        // background alarms are dropped silently. We only show the dialog when
+        // the app is not already excluded.
+        try {
+          final bool alreadyExcluded = await isIgnoringBatteryOptimizations();
+          if (!alreadyExcluded) {
+            debugPrint('Battery optimizations active — requesting exclusion for background alarms');
+            await requestIgnoreBatteryOptimizations();
+          } else {
+            debugPrint('Battery optimizations already disabled for this app');
+          }
+        } catch (e) {
+          debugPrint('Battery optimization check/request failed: $e');
+        }
       }
     } catch (e) {
       debugPrint('Failed to request notification permissions: $e');
@@ -298,6 +315,13 @@ class NotificationService {
     } catch (_) {
       exactAllowed = true; // Pre-Android 12 always permits exact alarms.
     }
+
+    // Battery optimisation status — the #1 silent killer of background alarms
+    // on OEM devices (Samsung, Huawei, Xiaomi, Oppo, Vivo).
+    bool batteryExcluded = true;
+    try {
+      batteryExcluded = await isIgnoringBatteryOptimizations();
+    } catch (_) {}
 
     // Counts what Android itself is holding; zero means the app never handed an
     // alarm over, which is a different fault than a blocked channel.
@@ -323,10 +347,13 @@ class NotificationService {
     } catch (_) {}
 
     final plugin = !_initialized ? 'PLUGIN OFFLINE: $_initError · ' : '';
+    final batteryStatus = batteryExcluded
+        ? 'battery optimization excluded'
+        : 'DEGRADED: battery optimization active (background alarms may be delayed or dropped)';
     return '$plugin'
         '${allowed ? 'Notifications allowed' : 'BLOCKED: notifications are switched off for QuotiMate'}'
         ' · ${exactAllowed ? 'exact alarms allowed' : 'DEGRADED: Android denies exact alarms, alerts can be late'}'
-        ' · $alarmChannel · $armed · icon: $_smallIcon';
+        ' · $alarmChannel · $armed · $batteryStatus · icon: $_smallIcon';
   }
 
   static const String _alarmChannelId = 'quotimate_alarms_v3';
