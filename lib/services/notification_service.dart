@@ -14,6 +14,26 @@ import 'dart:typed_data';
 /// notification is dismissed, so an alarm cannot buzz once and vanish.
 const int _flagInsistent = 4;
 
+/// How long after its scheduled time an alarm payload still counts as the
+/// alarm firing. Android delivers a full-screen alarm through the same intent
+/// as a notification tap, so time is the only way to tell "this alarm just
+/// went off" from "the user opened an old notification".
+const Duration alarmRingWindow = Duration(minutes: 15);
+
+/// True when [ringAt] is close enough to [now] that an incoming alarm payload
+/// is the alarm itself going off rather than a tap on a stale card.
+bool isWithinAlarmRingWindow(
+  DateTime ringAt, {
+  DateTime? now,
+  Duration window = alarmRingWindow,
+}) {
+  final moment = now ?? DateTime.now();
+  final delta = moment.difference(ringAt);
+  // A few seconds of early tolerance covers clock skew between the AlarmManager
+  // delivery and the device clock the Dart side reads.
+  return delta >= const Duration(seconds: -30) && delta <= window;
+}
+
 enum ArmStatus {
   /// At least one alert was handed to Android successfully.
   armed,
@@ -45,6 +65,12 @@ class NotificationService {
   String? _initError;
   String? _lastError;
 
+  // The battery-optimization dialog and the Alarms & reminders screen are
+  // system UI. Asking for them on every resume or for every scheduled item
+  // stacks screens on top of the user, so each is offered once per session.
+  bool _batteryPromptShown = false;
+  bool _exactPromptShown = false;
+
   /// Why the most recent device alert failed, or null when the last one worked.
   String? get lastError => _lastError;
 
@@ -75,6 +101,11 @@ class NotificationService {
     _pendingTap = null;
     return payload;
   }
+
+  /// The payload of the notification that launched the app, without consuming
+  /// it. Startup re-arming reads this so it does not cancel the alarm that is
+  /// ringing right now — the shell consumes the same payload later.
+  String? get pendingPayload => _pendingTap;
 
   Future<void> init({
     DidReceiveBackgroundNotificationResponseCallback? onBackground,
@@ -246,7 +277,7 @@ class NotificationService {
           exactOk = true; // Pre-Android 12: always allowed
         }
         if (!exactOk) {
-          await androidImplementation.requestExactAlarmsPermission();
+          await _requestExactPermissionOnce();
           try {
             exactOk = await androidImplementation.canScheduleExactNotifications() == true;
           } catch (_) {}
@@ -283,10 +314,11 @@ class NotificationService {
         // the app is not already excluded.
         try {
           final bool alreadyExcluded = await isIgnoringBatteryOptimizations();
-          if (!alreadyExcluded) {
+          if (!alreadyExcluded && !_batteryPromptShown) {
+            _batteryPromptShown = true;
             debugPrint('Battery optimizations active — requesting exclusion for background alarms');
             await requestIgnoreBatteryOptimizations();
-          } else {
+          } else if (alreadyExcluded) {
             debugPrint('Battery optimizations already disabled for this app');
           }
         } catch (e) {
@@ -492,6 +524,36 @@ class NotificationService {
     }
   }
 
+  Future<void> _requestExactPermissionOnce() async {
+    if (_exactPromptShown) return;
+    _exactPromptShown = true;
+    try {
+      await _localNotifications
+          .resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin>()
+          ?.requestExactAlarmsPermission();
+    } catch (e) {
+      debugPrint('requestExactAlarmsPermission failed: $e');
+    }
+  }
+
+  /// The notification id used for an item's "starting now" alert — the one that
+  /// rings as an alarm.
+  int alertIdFor(String itemId) => _generateId(itemId, suffix: '_start');
+
+  /// Ids currently visible on the lock screen / in the shade. A re-arm pass must
+  /// never cancel one of these, because it may be the alarm ringing right now.
+  Future<Set<int>> activeNotificationIds() async {
+    if (!_initialized || !_isSupported) return const <int>{};
+    try {
+      final active = await _localNotifications.getActiveNotifications();
+      return active.map((n) => n.id).whereType<int>().toSet();
+    } catch (e) {
+      debugPrint('Could not read active notifications: $e');
+      return const <int>{};
+    }
+  }
+
   /// Opens the system "Alarms & Reminders" special access screen for QuotiMate.
   Future<void> openExactAlarmSettings() async {
     if (!Platform.isAndroid) return;
@@ -556,15 +618,6 @@ class NotificationService {
     if (!_isSupported) return 'This platform has no local notification support.';
     if (!_initialized) return 'Notification plugin failed to start: $_initError';
 
-    // Verify Android exact alarm permission first
-    if (Platform.isAndroid) {
-      final exact = await canScheduleExactAlarms();
-      if (!exact) {
-        await openExactAlarmSettings();
-        return 'ACTION NEEDED: Android requires "Alarms & Reminders" permission for background delivery. We just opened Settings for you — please toggle it ON, then try again!';
-      }
-    }
-
     final targetTime = DateTime.now().add(Duration(seconds: seconds));
     final result = await _scheduleSingleReminder(
       id: 'test_bg',
@@ -578,6 +631,10 @@ class NotificationService {
     );
 
     if (result.armed) {
+      if (result.detail == 'inexact') {
+        return 'Armed for $seconds seconds, but Android only allowed a late alarm. '
+            'Enable "Alarms & reminders" for QuotiMate for exact timing.';
+      }
       return 'Armed for $seconds seconds! Minimize QuotiMate or lock your screen now to verify.';
     } else {
       return 'Failed to arm alert: ${result.detail ?? result.status.name}';
@@ -854,45 +911,29 @@ class NotificationService {
     // alarmClock is exempt from Doze and is the only mode that reliably fires
     // on OEM devices (Samsung, Xiaomi, Huawei) while the screen is off.
     // exactAllowWhileIdle is the fallback for devices where alarmClock is
-    // unavailable. inexactAllowWhileIdle is NOT used — on OEM battery savers
-    // it fires only when the screen turns on, which is indistinguishable from
-    // "notification fired when app came to focus", which is the exact bug we
-    // are fixing. Better to reject loudly and ask the user to grant the
-    // permission than to silently schedule something that won't work.
+    // unavailable. If Android refuses both, inexactAllowWhileIdle is still
+    // scheduled: it can run late under an OEM battery saver, but it does post
+    // while the app is backgrounded or killed. Silence is the worst outcome
+    // and what earlier builds shipped when the permission was missing.
     if (Platform.isAndroid) {
       final exact = await canScheduleExactAlarms();
       if (!exact) {
-        // The permission is missing. Open the system settings screen and
-        // return a clear rejection so the caller can surface it to the user.
-        // Do NOT fall through to zonedSchedule — scheduling without exact
-        // alarm permission produces an inexact alarm that only fires when the
-        // screen wakes up, making it appear to work only when the app is open.
-        debugPrint('Exact alarm permission denied for $id$suffix — rejecting schedule');
-        try {
-          await _localNotifications
-              .resolvePlatformSpecificImplementation<
-                  AndroidFlutterLocalNotificationsPlugin>()
-              ?.requestExactAlarmsPermission();
-        } catch (e) {
-          debugPrint('requestExactAlarmsPermission failed: $e');
-        }
-        _lastError = 'SCHEDULE_EXACT_ALARM permission denied';
-        return const ArmResult(
-          ArmStatus.rejected,
-          detail: 'ACTION NEEDED: open Settings → Special app access → '
-              'Alarms & reminders and enable QuotiMate.',
-        );
+        debugPrint('Exact alarm permission missing for $id$suffix — '
+            'scheduling an inexact fallback');
+        // Opens the system toggle once per session instead of once per alert.
+        unawaited(_requestExactPermissionOnce());
       }
     }
 
-    // Only try exact modes. Inexact is intentionally excluded — see comment above.
     final modes = <AndroidScheduleMode>[
-      AndroidScheduleMode.alarmClock,          // Doze-exempt, shows clock icon
-      AndroidScheduleMode.exactAllowWhileIdle, // Exact even in Doze, no clock icon
+      AndroidScheduleMode.alarmClock,           // Doze-exempt, shows clock icon
+      AndroidScheduleMode.exactAllowWhileIdle,  // Exact even in Doze
+      AndroidScheduleMode.inexactAllowWhileIdle, // Late but still delivered
     ];
 
     Object? lastFailure;
     for (final mode in modes) {
+      final inexact = mode == AndroidScheduleMode.inexactAllowWhileIdle;
       try {
         await _localNotifications.zonedSchedule(
           id: notificationId,
@@ -903,14 +944,9 @@ class NotificationService {
           androidScheduleMode: mode,
           payload: resolvedPayload,
         );
-        _lastError = null;
+        _lastError = inexact ? 'SCHEDULE_EXACT_ALARM permission denied' : null;
         debugPrint('Scheduled $id (suffix: $suffix) with $mode');
-        return ArmResult(
-          ArmStatus.armed,
-          detail: mode == AndroidScheduleMode.inexactAllowWhileIdle
-              ? 'inexact'
-              : null,
-        );
+        return ArmResult(ArmStatus.armed, detail: inexact ? 'inexact' : null);
       } catch (e) {
         lastFailure = e;
         debugPrint('Scheduling $id with $mode failed: $e');

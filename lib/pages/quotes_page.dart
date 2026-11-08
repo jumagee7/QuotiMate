@@ -75,7 +75,9 @@ class _QuotesPageState extends State<QuotesPage> {
     final expiredCount =
         appState.quotes.where((q) => q.status == QuoteStatus.expired).length;
 
-    return Column(
+    return Stack(
+      children: [
+        Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         // ── KPI Strip ───────────────────────────────────────────────────────
@@ -158,18 +160,6 @@ class _QuotesPageState extends State<QuotesPage> {
                 _sortMenuItem(QuoteSort.status, 'Status', Icons.flag_outlined),
               ],
             ),
-            const SizedBox(width: 8),
-            FilledButton.icon(
-              onPressed: () => _showQuoteDialog(context, appState),
-              icon: const Icon(Icons.add, size: 18),
-              label: const Text('New Quote', style: TextStyle(fontWeight: FontWeight.bold)),
-              style: FilledButton.styleFrom(
-                backgroundColor: _gold,
-                foregroundColor: Colors.black,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              ),
-            ),
           ],
         ),
         const SizedBox(height: 12),
@@ -209,6 +199,7 @@ class _QuotesPageState extends State<QuotesPage> {
                   ),
                 )
               : ListView.builder(
+                  padding: const EdgeInsets.only(bottom: 88),
                   itemCount: filtered.length,
                   itemBuilder: (context, index) {
                     final quote = filtered[index];
@@ -226,6 +217,19 @@ class _QuotesPageState extends State<QuotesPage> {
                     );
                   },
                 ),
+        ),
+      ],
+        ),
+        Positioned(
+          right: 0,
+          bottom: 16,
+          child: FloatingActionButton.extended(
+            onPressed: () => _showQuoteDialog(context, appState),
+            backgroundColor: _gold,
+            foregroundColor: Colors.black,
+            icon: const Icon(Icons.add_rounded),
+            label: const Text('New Quote', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
         ),
       ],
     );

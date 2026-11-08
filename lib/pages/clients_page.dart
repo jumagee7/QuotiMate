@@ -51,10 +51,11 @@ class _ClientsPageState extends State<ClientsPage> {
         break;
     }
 
-    return Column(
+    return Stack(
+      children: [
+        Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Toolbar
         Row(
           children: [
             Expanded(
@@ -115,18 +116,6 @@ class _ClientsPageState extends State<ClientsPage> {
                 _sortMenuItem(ClientSort.company, 'Company Name', Icons.business_outlined),
               ],
             ),
-            const SizedBox(width: 8),
-            FilledButton.icon(
-              onPressed: () => _showClientDialog(context, appState, null),
-              icon: const Icon(Icons.person_add, size: 16),
-              label: const Text('New Client', style: TextStyle(fontWeight: FontWeight.bold)),
-              style: FilledButton.styleFrom(
-                backgroundColor: _cGold,
-                foregroundColor: Colors.black,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              ),
-            ),
           ],
         ),
         const SizedBox(height: 16),
@@ -163,6 +152,7 @@ class _ClientsPageState extends State<ClientsPage> {
                         // Rows
                         Expanded(
                           child: ListView.builder(
+                            padding: const EdgeInsets.only(bottom: 88),
                             itemCount: filtered.length,
                             itemBuilder: (context, i) {
                               final c = filtered[i];
@@ -184,6 +174,19 @@ class _ClientsPageState extends State<ClientsPage> {
                       ],
                     ),
                   ),
+          ),
+        ),
+      ],
+        ),
+        Positioned(
+          right: 0,
+          bottom: 16,
+          child: FloatingActionButton.extended(
+            onPressed: () => _showClientDialog(context, appState, null),
+            backgroundColor: _cGold,
+            foregroundColor: Colors.black,
+            icon: const Icon(Icons.person_add_alt_1_rounded),
+            label: const Text('New Client', style: TextStyle(fontWeight: FontWeight.bold)),
           ),
         ),
       ],

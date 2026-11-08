@@ -89,7 +89,9 @@ class _ProjectsPageState extends State<ProjectsPage> {
     final totalNetProfit = totalCollected - totalExpenses;
     final overallMargin = totalCollected > 0 ? (totalNetProfit / totalCollected) * 100 : 0.0;
 
-    return Column(
+    return Stack(
+      children: [
+        Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         // ── Top KPI Strip ───────────────────────────────────────────────────
@@ -175,18 +177,6 @@ class _ProjectsPageState extends State<ProjectsPage> {
                 _sortMenuItem(ProjectSort.status, 'Status', Icons.flag_outlined),
               ],
             ),
-            const SizedBox(width: 8),
-            ElevatedButton.icon(
-              onPressed: () => _showCreateProjectDialog(context, appState),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: _gold,
-                foregroundColor: Colors.black,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              ),
-              icon: const Icon(Icons.add_rounded, size: 18),
-              label: const Text('New Project', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-            ),
           ],
         ),
         const SizedBox(height: 12),
@@ -211,9 +201,23 @@ class _ProjectsPageState extends State<ProjectsPage> {
           child: filtered.isEmpty
               ? _buildEmptyState(context, appState)
               : ListView.builder(
+                  padding: const EdgeInsets.only(bottom: 88),
                   itemCount: filtered.length,
                   itemBuilder: (ctx, idx) => _buildProjectCard(context, appState, filtered[idx]),
                 ),
+        ),
+      ],
+        ),
+        Positioned(
+          right: 0,
+          bottom: 16,
+          child: FloatingActionButton.extended(
+            onPressed: () => _showCreateProjectDialog(context, appState),
+            backgroundColor: _gold,
+            foregroundColor: Colors.black,
+            icon: const Icon(Icons.add_rounded),
+            label: const Text('New Project', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
         ),
       ],
     );

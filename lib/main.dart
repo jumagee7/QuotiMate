@@ -124,7 +124,11 @@ class _SplashScreenState extends State<_SplashScreen> with SingleTickerProviderS
     _fade = CurvedAnimation(parent: _ctrl, curve: Curves.easeIn);
     _ctrl.forward();
 
-    _timer = Timer(const Duration(milliseconds: 2200), () {
+    // An alarm must reach its ringing screen immediately: the system launches
+    // the app with the alarm payload, so do not hold it behind the splash.
+    final launcher = NotificationService().pendingPayload;
+    final launchedByAlarm = launcher != null && launcher.endsWith(':alarm');
+    _timer = Timer(Duration(milliseconds: launchedByAlarm ? 50 : 2200), () {
       if (!mounted) return;
 
       final isAuthenticated = AuthService().isAuthenticated;

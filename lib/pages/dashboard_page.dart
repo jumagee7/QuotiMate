@@ -16,74 +16,98 @@ class DashboardPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final state = AppStateProvider.of(context);
     final isDesktop = MediaQuery.of(context).size.width >= 800;
-    return SingleChildScrollView(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const UpdateBanner(),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            decoration: BoxDecoration(
-              color: const Color(0xFF161B26),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: const Color(0xFF2A3045), width: 1),
-            ),
-            child: const TextField(
-              style: TextStyle(color: Colors.white),
-              decoration: InputDecoration(
-                hintText: 'Search quotations',
-                hintStyle: TextStyle(color: Color(0xFF8A92A6)),
-                icon: Icon(Icons.search, color: Color(0xFF8A92A6)),
-                border: InputBorder.none,
-              ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Pinned above the scroll area so search stays reachable at any depth.
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          decoration: BoxDecoration(
+            color: const Color(0xFF161B26),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFF2A3045), width: 1),
+          ),
+          child: const TextField(
+            style: TextStyle(color: Colors.white),
+            decoration: InputDecoration(
+              hintText: 'Search quotations',
+              hintStyle: TextStyle(color: Color(0xFF8A92A6)),
+              icon: Icon(Icons.search, color: Color(0xFF8A92A6)),
+              border: InputBorder.none,
             ),
           ),
-          const SizedBox(height: 20),
-          _KpiRow(state: state),
-          const SizedBox(height: 20),
+        ),
+        const SizedBox(height: 16),
+        Expanded(
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const UpdateBanner(),
+                const SizedBox(height: 20),
+                _KpiRow(state: state),
+                const SizedBox(height: 20),
 
-          // ── Projects Overview ─────────────────────────────────────────────
-          _sectionHeader(
-            context,
-            'Projects & QuickBook',
-            actionLabel: state.projects.isNotEmpty ? 'View all (${state.projects.length})' : 'Explore Projects',
-            onTap: () => onNavigate?.call(7),
-          ),
-          const SizedBox(height: 12),
-          _ProjectsDashboardSection(
-            projects: state.projects.take(6).toList(),
-            state: state,
-            onNavigate: onNavigate,
-          ),
-          const SizedBox(height: 20),
+                // ── Projects Overview ─────────────────────────────────────────
+                _sectionHeader(
+                  context,
+                  'Projects & QuickBook',
+                  actionLabel: state.projects.isNotEmpty ? 'View all (${state.projects.length})' : 'Explore Projects',
+                  onTap: () => onNavigate?.call(7),
+                ),
+                const SizedBox(height: 12),
+                _ProjectsDashboardSection(
+                  projects: state.projects.take(6).toList(),
+                  state: state,
+                  onNavigate: onNavigate,
+                ),
+                const SizedBox(height: 20),
 
-          if (state.pinnedQuotes.isNotEmpty) ...[
-            _sectionHeader(context, 'Pinned Quotations',
-                actionLabel: 'View all', onTap: () => onNavigate?.call(1)),
-            const SizedBox(height: 12),
-            _PinnedList(quotes: state.pinnedQuotes),
-            const SizedBox(height: 24),
-          ],
-          isDesktop ? Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                flex: 3,
-                child: Column(
+                if (state.pinnedQuotes.isNotEmpty) ...[
+                  _sectionHeader(context, 'Pinned Quotations',
+                      actionLabel: 'View all', onTap: () => onNavigate?.call(1)),
+                  const SizedBox(height: 12),
+                  _PinnedList(quotes: state.pinnedQuotes),
+                  const SizedBox(height: 24),
+                ],
+                isDesktop ? Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      flex: 3,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _sectionTitle(context, 'Recent Quotations'),
+                          const SizedBox(height: 10),
+                          _RecentQuotesGrid(quotes: state.quotes.reversed.take(6).toList()),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      flex: 2,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _sectionTitle(context, 'Activity'),
+                          const SizedBox(height: 10),
+                          _ActivityPanel(activities: state.activities),
+                          const SizedBox(height: 16),
+                          _sectionTitle(context, 'Revenue Overview'),
+                          const SizedBox(height: 10),
+                          _RevenueChart(state: state),
+                        ],
+                      ),
+                    ),
+                  ],
+                ) : Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     _sectionTitle(context, 'Recent Quotations'),
                     const SizedBox(height: 10),
                     _RecentQuotesGrid(quotes: state.quotes.reversed.take(6).toList()),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                flex: 2,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
+                    const SizedBox(height: 24),
                     _sectionTitle(context, 'Activity'),
                     const SizedBox(height: 10),
                     _ActivityPanel(activities: state.activities),
@@ -93,27 +117,12 @@ class DashboardPage extends StatelessWidget {
                     _RevenueChart(state: state),
                   ],
                 ),
-              ),
-            ],
-          ) : Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _sectionTitle(context, 'Recent Quotations'),
-              const SizedBox(height: 10),
-              _RecentQuotesGrid(quotes: state.quotes.reversed.take(6).toList()),
-              const SizedBox(height: 24),
-              _sectionTitle(context, 'Activity'),
-              const SizedBox(height: 10),
-              _ActivityPanel(activities: state.activities),
-              const SizedBox(height: 16),
-              _sectionTitle(context, 'Revenue Overview'),
-              const SizedBox(height: 10),
-              _RevenueChart(state: state),
-            ],
+                const SizedBox(height: 24),
+              ],
+            ),
           ),
-          const SizedBox(height: 24),
-        ],
-      ),
+        ),
+      ],
     );
   }
 

@@ -303,28 +303,35 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     }
 
     bool permissionRejected = false;
+    bool degradedToInexact = false;
+
+    // A card that is currently visible may be the alarm ringing right now.
+    // Re-arming it would cancel the notification before the user hears it.
+    final active = await notifications.activeNotificationIds();
 
     // Each schedule call tears down that item's own older alerts. A blanket
     // cancelAll() here would delete alerts for any item whose re-arm failed,
     // which silently removed working reminders at startup.
     for (final t in _tasks) {
-      if (t.status != TaskStatus.done) {
-        final result = await notifications.scheduleTaskReminder(
-          id: t.id,
-          title: t.title,
-          body: t.description,
-          dueDate: t.dueDate,
-          leadMinutes: t.reminderLeadMinutes,
-          alarm: t.alarmEnabled,
-          buzz: alarmBuzzEnabled,
-        );
-        if (result.status == ArmStatus.rejected &&
-            (result.detail ?? '').contains('SCHEDULE_EXACT_ALARM')) {
-          permissionRejected = true;
-        }
+      if (t.status == TaskStatus.done) continue;
+      if (active.contains(notifications.alertIdFor(t.id))) continue;
+      final result = await notifications.scheduleTaskReminder(
+        id: t.id,
+        title: t.title,
+        body: t.description,
+        dueDate: t.dueDate,
+        leadMinutes: t.reminderLeadMinutes,
+        alarm: t.alarmEnabled,
+        buzz: alarmBuzzEnabled,
+      );
+      if (result.detail == 'inexact') degradedToInexact = true;
+      if (result.status == ArmStatus.rejected &&
+          (result.detail ?? '').contains('SCHEDULE_EXACT_ALARM')) {
+        permissionRejected = true;
       }
     }
     for (final e in _events) {
+      if (active.contains(notifications.alertIdFor(e.id))) continue;
       final result = await notifications.scheduleEventReminders(
         id: e.id,
         title: e.title,
@@ -334,20 +341,31 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
         alarm: e.alarmEnabled,
         buzz: alarmBuzzEnabled,
       );
+      if (result.detail == 'inexact') degradedToInexact = true;
       if (result.status == ArmStatus.rejected &&
           (result.detail ?? '').contains('SCHEDULE_EXACT_ALARM')) {
         permissionRejected = true;
       }
     }
 
-    // If any alarm was rejected due to missing exact-alarm permission, push a
-    // persistent in-app notification so the user knows their alarms won't fire.
-    if (permissionRejected) {
+    // Inexact alerts still arrive, just not on the exact minute. Say so instead
+    // of leaving the user to discover it when an alarm rings late.
+    if (degradedToInexact) {
       pushNotification(
         key: 'n_exact_alarm_denied',
-        title: 'Alarms need permission',
-        body: 'Go to Settings → Notifications → "Alarms & Reminders" and '
-            'enable QuotiMate so scheduled alarms fire in the background.',
+        title: 'Alarms may ring late',
+        body: 'Android only allowed inexact alarms. Enable '
+            '"Alarms & reminders" for QuotiMate under Settings → Special app '
+            'access for exact timing.',
+        icon: Icons.alarm_off_rounded,
+        color: Colors.amber,
+      );
+    } else if (permissionRejected) {
+      pushNotification(
+        key: 'n_exact_alarm_denied',
+        title: 'Alarms could not be armed',
+        body: 'Android refused every alarm mode. Enable "Alarms & reminders" '
+            'for QuotiMate under Settings → Special app access.',
         icon: Icons.alarm_off_rounded,
         color: Colors.redAccent,
       );
@@ -1362,7 +1380,8 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
         body: switch (result.status) {
           ArmStatus.armed =>
             '${task.title} — ${whenPhrase(ringAt)}'
-                '${leadSkipped ? ' (heads-up window already passed)' : ''}',
+                '${leadSkipped ? ' (heads-up window already passed)' : ''}'
+                '${result.detail == 'inexact' ? ' · Android only allowed a late alarm' : ''}',
           ArmStatus.past =>
             '${task.title} — due ${_stamp(task.dueDate)}, already behind your clock '
                 '(${_stamp(DateTime.now())}), so nothing could ring.',
@@ -1436,7 +1455,8 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
         body: switch (result.status) {
           ArmStatus.armed =>
             '${event.title} — ${whenPhrase(ringAt)}'
-                '${leadSkipped ? ' (heads-up window already passed)' : ''}',
+                '${leadSkipped ? ' (heads-up window already passed)' : ''}'
+                '${result.detail == 'inexact' ? ' · Android only allowed a late alarm' : ''}',
           ArmStatus.past =>
             '${event.title} — starts ${_stamp(event.startTime)}, already behind your clock '
                 '(${_stamp(DateTime.now())}), so nothing could ring.',

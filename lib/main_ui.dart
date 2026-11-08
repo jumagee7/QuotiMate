@@ -15,6 +15,7 @@ import 'pages/settings_page.dart';
 import 'pages/schedule_page.dart';
 import 'pages/sign_in_page.dart';
 import 'pages/alarm_acknowledged_page.dart';
+import 'pages/alarm_ringing_page.dart';
 import 'services/auth_service.dart';
 import 'services/cloud_sync_service.dart';
 import 'services/notification_service.dart';
@@ -113,15 +114,37 @@ class _QuotiMateShellState extends State<QuotiMateShell> with WidgetsBindingObse
       final id = parts[1];
       final isAlarm = parts.length > 2 && parts[2] == 'alarm';
       final appState = AppStateProvider.of(context);
-      final rings = isAlarm && appState.alarmBuzzEnabled &&
-          switch (kind) {
-            'task' => appState.tasks.any((t) => t.id == id && t.alarmEnabled),
-            'event' => appState.events.any((e) => e.id == id && e.alarmEnabled),
-            _ => false,
-          };
+      DateTime? ringAt;
+      bool alarmOn = false;
+      if (kind == 'task') {
+        final task = appState.tasks.where((t) => t.id == id).firstOrNull;
+        ringAt = task?.dueDate;
+        alarmOn = task?.alarmEnabled ?? false;
+      } else if (kind == 'event') {
+        final event = appState.events.where((e) => e.id == id).firstOrNull;
+        ringAt = event?.startTime;
+        alarmOn = event?.alarmEnabled ?? false;
+      }
+      final rings = isAlarm && alarmOn && appState.alarmBuzzEnabled && ringAt != null;
       if (rings) {
-        // The tap is the acknowledgement: silence the card before showing the
-        // summary. Opening the shade afterwards must not be what stops it.
+        // Android delivers a full-screen alarm through the same intent as a
+        // notification tap. When this payload coincides with the alarm's own
+        // ring time it is the alarm going off, not an acknowledgement — show
+        // the ringing screen and keep the card alive until it is stopped.
+        if (isWithinAlarmRingWindow(ringAt)) {
+          Navigator.of(context, rootNavigator: true).push(
+            MaterialPageRoute(
+              fullscreenDialog: true,
+              builder: (_) => AlarmRingingPage(
+                kind: kind,
+                itemId: id,
+                appState: appState,
+              ),
+            ),
+          );
+          return;
+        }
+        // A tap on an alarm whose ring window has passed is the acknowledgement.
         await NotificationService().cancelReminder(id);
         if (!mounted) return;
         Navigator.of(context, rootNavigator: true).push(
