@@ -46,15 +46,6 @@ void main() async {
   await CloudSyncService().init();
 
   runApp(const QuotiMateApp());
-
-  // Request the Android 13+ notification permission after the first frame so
-  // the system dialog reliably shows with the app in the foreground.
-  // requestPermissions() also auto-requests battery optimization exclusion,
-  // which is the primary reason background alarms are silently dropped on
-  // OEM devices (Samsung One UI, Huawei EMUI/HarmonyOS, Xiaomi MIUI, etc.).
-  WidgetsBinding.instance.addPostFrameCallback((_) {
-    NotificationService().requestPermissions();
-  });
 }
 
 class QuotiMateApp extends StatefulWidget {
@@ -66,6 +57,22 @@ class QuotiMateApp extends StatefulWidget {
 
 class _QuotiMateAppState extends State<QuotiMateApp> {
   final AppState _state = AppState();
+
+  @override
+  void initState() {
+    super.initState();
+    // Ask for the Android 13+ notification permission after the first frame so
+    // the system dialog reliably shows with the app in the foreground.
+    // requestPermissions() also auto-requests battery optimization exclusion,
+    // which is the primary reason background alarms are silently dropped on
+    // OEM devices (Samsung One UI, Huawei EMUI/HarmonyOS, Xiaomi MIUI, etc.).
+    // Re-reading the health afterwards keeps the Settings pills honest instead
+    // of reporting the pre-grant state.
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await NotificationService().requestPermissions();
+      await _state.refreshAlarmHealth();
+    });
+  }
 
   @override
   void dispose() {

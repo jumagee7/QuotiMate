@@ -63,6 +63,10 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   final Set<String> _seenScheduleStates = {};
   Timer? _scheduleTicker;
 
+  // ── Alert delivery health (last read from Android) ────────────────────────
+  AlarmHealth? _alarmHealth;
+  AlarmHealth? get alarmHealth => _alarmHealth;
+
   // ── Settings ───────────────────────────────────────────────────────────────
   String companyName = 'MODERN EDGE';
   String companyEmail = 'jumaink20@gmail.com';
@@ -157,6 +161,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     }
     _seedNotifications();
     await _rescheduleAllNotifications();
+    await refreshAlarmHealth();
     _startScheduleTicker();
 
     // Check user profile from AuthService
@@ -374,7 +379,19 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   /// Re-arms every task/event alert. Called after the OS notification
   /// permissions change so alarms queued before the grant get a second chance.
-  Future<void> refreshScheduledNotifications() => _rescheduleAllNotifications();
+  Future<void> refreshScheduledNotifications() async {
+    await _rescheduleAllNotifications();
+    await refreshAlarmHealth();
+  }
+
+  /// Re-reads the Android switches that decide whether a background alert can
+  /// reach the user, so the UI can point at the exact blocker.
+  Future<void> refreshAlarmHealth() async {
+    final health = await NotificationService().checkAlarmHealth();
+    if (health == null) return;
+    _alarmHealth = health;
+    notifyListeners();
+  }
 
   // ── Load products from itemlist.json ──────────────────────────────────────────
   Future<void> _loadProductsFromItemlist() async {
@@ -824,6 +841,9 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     // cleared it from Settings, this reclaims it. The system only shows a dialog
     // when the permission is absent; if already excluded this is a no-op.
     NotificationService().requestPermissions();
+    // The user may just have come back from a settings screen; re-read the
+    // switches so the banner disappears as soon as the blocker is cleared.
+    refreshAlarmHealth();
   }
 
   void _baselineScheduleStates() {

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../app_state.dart';
 import '../models.dart';
 import '../services/notification_service.dart';
+import '../widgets/alarm_health_banner.dart';
 
 String fmtClock(DateTime dt) {
   final h = dt.hour > 12 ? dt.hour - 12 : (dt.hour == 0 ? 12 : dt.hour);
@@ -37,6 +38,7 @@ class _SchedulePageState extends State<SchedulePage> with SingleTickerProviderSt
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        const AlarmHealthBanner(),
         // â”€â”€ Tab bar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         Container(
           padding: const EdgeInsets.all(4),

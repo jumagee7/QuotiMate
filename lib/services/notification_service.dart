@@ -52,6 +52,49 @@ class ArmResult {
   bool get armed => status == ArmStatus.armed;
 }
 
+/// Every OS-level switch that can hold an alert back. Each blocker is
+/// actionable from the UI, so a blocked device can be repaired instead of
+/// silently swallowing alarms until the app is opened.
+class AlarmHealth {
+  const AlarmHealth({
+    required this.pluginReady,
+    required this.notificationsAllowed,
+    required this.exactAllowed,
+    required this.alarmChannelActive,
+    required this.reminderChannelActive,
+    required this.batteryExcluded,
+    required this.pendingAlerts,
+    this.pluginError,
+  });
+
+  final bool pluginReady;
+  final bool notificationsAllowed;
+  final bool exactAllowed;
+  final bool alarmChannelActive;
+  final bool reminderChannelActive;
+  final bool batteryExcluded;
+  final int pendingAlerts;
+  final String? pluginError;
+
+  bool get healthy =>
+      pluginReady &&
+      notificationsAllowed &&
+      exactAllowed &&
+      alarmChannelActive &&
+      reminderChannelActive &&
+      batteryExcluded;
+
+  List<String> get blockers => <String>[
+        if (!pluginReady) 'The notification plugin failed to start',
+        if (!notificationsAllowed) 'Notifications are switched off for QuotiMate',
+        if (!exactAllowed) 'Android denies exact alarms, so alerts can be delayed',
+        if (!alarmChannelActive) 'The QuotiMate Alarms channel is muted',
+        if (!reminderChannelActive) 'The QuotiMate Reminders channel is muted',
+        if (!batteryExcluded)
+          'Battery optimisation can freeze QuotiMate in the background',
+      ];
+}
+
 class NotificationService {
   static final NotificationService _instance = NotificationService._();
   factory NotificationService() => _instance;
@@ -200,7 +243,7 @@ class NotificationService {
       // These _v2 IDs guarantee fresh settings on devices where earlier builds
       // created the old channels with lower importance / no alarm sound.
       const AndroidNotificationChannel channel = AndroidNotificationChannel(
-        'quotimate_reminders_v2',
+        _reminderChannelId,
         'QuotiMate Reminders',
         description: 'Notifications for scheduled events and tasks',
         importance: Importance.max,
@@ -210,13 +253,13 @@ class NotificationService {
       );
 
       await androidImplementation.createNotificationChannel(channel);
-      debugPrint('Notification channel created: quotimate_reminders_v2');
+      debugPrint('Notification channel created: $_reminderChannelId');
 
       // v3 is a fresh channel because Android freezes channel settings after
       // creation: v2 devices would otherwise keep a channel that was muted or
       // downgraded by an earlier build.
       final AndroidNotificationChannel alarmChannel = AndroidNotificationChannel(
-        'quotimate_alarms_v3',
+        _alarmChannelId,
         'QuotiMate Alarms',
         description: 'Full-screen alarms that ring and vibrate until stopped',
         importance: Importance.max,
@@ -330,9 +373,9 @@ class NotificationService {
     }
   }
 
-  /// OS-level switches that stop alerts without the app failing loudly.
-  /// Returns null when they cannot be read (non-Android).
-  Future<String?> diagnosticSummary() async {
+  /// Reads every OS switch that can delay or drop an alert so the UI can name
+  /// the exact blocker. Returns null when local notifications are unavailable.
+  Future<AlarmHealth?> checkAlarmHealth() async {
     if (!_initialized) await init();
     if (!_isSupported) return null;
 
@@ -355,43 +398,68 @@ class NotificationService {
       batteryExcluded = await isIgnoringBatteryOptimizations();
     } catch (_) {}
 
-    // Counts what Android itself is holding; zero means the app never handed an
-    // alarm over, which is a different fault than a blocked channel.
-    String armed = 'no alerts queued with Android';
-    try {
-      final pending = await _localNotifications.pendingNotificationRequests();
-      if (pending.isNotEmpty) armed = '${pending.length} alert(s) queued with Android';
-    } catch (_) {}
-
     // A channel the user muted in Android settings keeps accepting posts while
     // silently dropping them, which looks exactly like "alerts only work while
     // the app is open".
-    var alarmChannel = 'alarm channel not found';
+    var alarmChannelActive = true;
+    var reminderChannelActive = true;
     try {
       final channels = await android.getNotificationChannels();
-      final channel =
-          channels?.where((c) => c.id == _alarmChannelId).firstOrNull;
-      if (channel != null) {
-        alarmChannel = channel.importance == Importance.none
-            ? 'BLOCKED: the QuotiMate Alarms channel is muted in Android settings'
-            : 'alarm channel active';
-      }
+      final alarm = channels?.where((c) => c.id == _alarmChannelId).firstOrNull;
+      final reminder = channels?.where((c) => c.id == _reminderChannelId).firstOrNull;
+      alarmChannelActive = alarm == null || alarm.importance != Importance.none;
+      reminderChannelActive = reminder == null || reminder.importance != Importance.none;
     } catch (_) {}
 
-    final plugin = !_initialized ? 'PLUGIN OFFLINE: $_initError · ' : '';
-    final batteryStatus = batteryExcluded
+    // Counts what Android itself is holding. Zero means the app never handed an
+    // alarm over, which is a different fault than a blocked channel.
+    var pending = 0;
+    try {
+      pending = (await _localNotifications.pendingNotificationRequests()).length;
+    } catch (_) {}
+
+    return AlarmHealth(
+      pluginReady: _initialized,
+      notificationsAllowed: allowed,
+      exactAllowed: exactAllowed,
+      alarmChannelActive: alarmChannelActive,
+      reminderChannelActive: reminderChannelActive,
+      batteryExcluded: batteryExcluded,
+      pendingAlerts: pending,
+      pluginError: _initError,
+    );
+  }
+
+  /// OS-level switches that stop alerts without the app failing loudly.
+  /// Returns null when they cannot be read (non-Android).
+  Future<String?> diagnosticSummary() async {
+    final health = await checkAlarmHealth();
+    if (health == null) return null;
+
+    final plugin =
+        !health.pluginReady ? 'PLUGIN OFFLINE: ${health.pluginError} · ' : '';
+    final exact = health.exactAllowed
+        ? 'exact alarms allowed'
+        : 'DEGRADED: Android denies exact alarms, alerts can be late';
+    final alarmChannel = health.alarmChannelActive
+        ? 'alarm channel active'
+        : 'BLOCKED: the QuotiMate Alarms channel is muted in Android settings';
+    final armed = health.pendingAlerts == 0
+        ? 'no alerts queued with Android'
+        : '${health.pendingAlerts} alert(s) queued with Android';
+    final batteryStatus = health.batteryExcluded
         ? 'battery optimization excluded'
         : 'DEGRADED: battery optimization active (background alarms may be delayed or dropped)';
     return '$plugin'
-        '${allowed ? 'Notifications allowed' : 'BLOCKED: notifications are switched off for QuotiMate'}'
-        ' · ${exactAllowed ? 'exact alarms allowed' : 'DEGRADED: Android denies exact alarms, alerts can be late'}'
-        ' · $alarmChannel · $armed · $batteryStatus · icon: $_smallIcon';
+        '${health.notificationsAllowed ? 'Notifications allowed' : 'BLOCKED: notifications are switched off for QuotiMate'}'
+        ' · $exact · $alarmChannel · $armed · $batteryStatus · icon: $_smallIcon';
   }
 
   static const String _alarmChannelId = 'quotimate_alarms_v3';
+  static const String _reminderChannelId = 'quotimate_reminders_v2';
 
   AndroidNotificationDetails _reminderDetails() => AndroidNotificationDetails(
-        'quotimate_reminders_v2',
+        _reminderChannelId,
         'QuotiMate Reminders',
         channelDescription: 'Notifications for scheduled events and tasks',
         importance: Importance.max,
@@ -630,14 +698,35 @@ class NotificationService {
       buzz: true,
     );
 
-    if (result.armed) {
-      if (result.detail == 'inexact') {
-        return 'Armed for $seconds seconds, but Android only allowed a late alarm. '
-            'Enable "Alarms & reminders" for QuotiMate for exact timing.';
-      }
-      return 'Armed for $seconds seconds! Minimize QuotiMate or lock your screen now to verify.';
-    } else {
+    if (!result.armed) {
       return 'Failed to arm alert: ${result.detail ?? result.status.name}';
+    }
+
+    // A successful zonedSchedule() only proves the platform call returned.
+    // The plugin persists the request before handing it to AlarmManager, so a
+    // missing entry here means the alert never reached Android at all.
+    final queued = await _isQueued(_generateId('test_bg', suffix: '_probe'));
+    if (!queued) {
+      return 'Alert not queued: Android accepted the call but holds no alarm. '
+          'Set QuotiMate to Unrestricted under Settings → Battery and allow '
+          'auto-start, then try again.';
+    }
+    if (result.detail == 'inexact') {
+      return 'Armed for $seconds seconds, but Android only allowed an inexact '
+          'alarm — it can arrive minutes late. Enable "Alarms & reminders" for '
+          'QuotiMate for exact timing.';
+    }
+    return 'Armed for $seconds seconds! Minimize QuotiMate or lock your screen now to verify.';
+  }
+
+  /// True when the alert is still in the plugin's queue handed to AlarmManager.
+  Future<bool> _isQueued(int id) async {
+    try {
+      final pending = await _localNotifications.pendingNotificationRequests();
+      return pending.any((p) => p.id == id);
+    } catch (e) {
+      debugPrint('Could not read the pending queue: $e');
+      return false;
     }
   }
 

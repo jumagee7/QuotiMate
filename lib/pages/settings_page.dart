@@ -14,6 +14,7 @@ import '../services/auth_service.dart';
 import '../services/cloud_sync_service.dart';
 import '../services/notification_service.dart';
 import '../services/update_service.dart';
+import '../widgets/alarm_health_banner.dart';
 import 'sign_in_page.dart';
 import 'pdf_viewer_page.dart';
 import 'update_prompt.dart';
@@ -306,6 +307,8 @@ class _SettingsPageState extends State<SettingsPage> {
           title: 'Notifications',
           child: Column(
             children: [
+              const AlarmHealthStatus(),
+              const SizedBox(height: 14),
               _switchTile(
                 'Enable In-App Notifications',
                 'Show notification badges and alerts. Switching this off cancels every scheduled alarm.',
@@ -482,8 +485,10 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
               const SizedBox(height: 8),
               const Text(
-                'Tap to test if notifications are working on your device, or check what Android is blocking',
-                style: TextStyle(color: Colors.white54, fontSize: 11),
+                'Tap to test if notifications are working on your device, or check what Android is blocking.\n'
+                'Still late with every pill green? Allow QuotiMate under Auto-start / Background app '
+                'management in your phone settings (Tecno, Infinix, Xiaomi, Oppo, Vivo).',
+                style: TextStyle(color: Colors.white54, fontSize: 11, height: 1.35),
               ),
             ],
           ),
