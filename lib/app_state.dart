@@ -98,6 +98,12 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   bool _loaded = false;
   bool _productsRetrievalToastShown = false;
 
+  // ── Cloud sync session & per-area failures ────────────────────────────────
+  StreamSubscription<String?>? _authUidSub;
+  String? _syncingForUid;
+  final Map<String, String> _syncErrors = {};
+  Timer? _syncErrorToastTimer;
+
   // ── Offline sync tracking ──────────────────────────────────────────────────
   int _pendingOfflineWrites = 0;
   bool get hasPendingOfflineWrites => _pendingOfflineWrites > 0;
@@ -172,11 +178,27 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       userPhotoUrl = user.photoUrl;
     }
 
-    _startCloudSyncListeners();
-    // Backfill/purge the cloud catalogue if we're already signed in at startup
-    _uploadProductsToCloud();
+    _authUidSub = AuthService().firebaseUidChanges.listen(_handleAuthSession);
+    _handleAuthSession(AuthService().firebaseUid);
     ReviewServerService().start(appState: this);
     notifyListeners();
+  }
+
+  /// Starts cloud readers only when Firebase has a live session. A profile
+  /// restored from prefs is not a session: guest sign-in and expired tokens
+  /// leave Firestore unauthenticated, and the rules then deny every read.
+  Future<void> _handleAuthSession(String? uid) async {
+    if (uid == null) {
+      if (_syncingForUid != null) {
+        _syncingForUid = null;
+        CloudSyncService().stopListening();
+      }
+      return;
+    }
+    if (_syncingForUid == uid) return;
+    _syncingForUid = uid;
+    _startCloudSyncListeners();
+    await _uploadProductsToCloud();
   }
 
   void _startCloudSyncListeners() {
@@ -271,32 +293,65 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
           notifyListeners();
         }
       },
-      onProductsError: (e) {
-        showToast(
-          'Cloud catalogue retrieval failed: $e',
-          color: const Color(0xFFB71C1C),
-          duration: const Duration(seconds: 5),
-        );
-      },
+      onSyncError: _onSyncError,
     );
+  }
+
+  static const Map<String, String> _syncAreaNames = {
+    'quotations': 'quotations',
+    'invoices': 'invoices',
+    'clients': 'clients',
+    'products': 'catalogue',
+    'tasks': 'tasks',
+    'schedules': 'schedules',
+    'projects': 'projects',
+    'settings': 'workspace settings',
+  };
+
+  /// Collects read failures from all collections and reports them once. Each
+  /// listener fails in the same tick when rules deny the session, so the toast
+  /// is debounced instead of stacking eight identical messages.
+  void _onSyncError(String collection, String error) {
+    _syncErrors[collection] = error;
+    debugPrint('Cloud sync error for $collection: $error');
+    _syncErrorToastTimer?.cancel();
+    _syncErrorToastTimer = Timer(const Duration(milliseconds: 900), () {
+      if (_syncErrors.isEmpty) return;
+      final areas = _syncErrors.keys.map((k) => _syncAreaNames[k] ?? k).join(', ');
+      final signedIn = AuthService().isFirebaseSignedIn;
+      showToast(
+        signedIn
+            ? 'Cloud sync was denied for: $areas. Check the Firestore rules for this account.'
+            : 'Cloud sync is paused: sign in with Google to sync $areas.',
+        color: const Color(0xFFB71C1C),
+        duration: const Duration(seconds: 6),
+      );
+      _syncErrors.clear();
+    });
   }
 
   /// Call this after a successful sign-in to immediately start cloud sync listeners
   /// and backfill any local products missing from the cloud.
   Future<void> restartCloudSync() async {
-    CloudSyncService().stopListening();
-    _startCloudSyncListeners();
-    await _uploadProductsToCloud();
+    _syncingForUid = null;
+    final uid = AuthService().firebaseUid;
+    if (uid == null) {
+      CloudSyncService().stopListening();
+      return;
+    }
+    await _handleAuthSession(uid);
   }
 
   /// Uploads local products to the cloud if not already present there.
   Future<void> _uploadProductsToCloud() async {
-    if (!AuthService().isAuthenticated) return;
+    if (!AuthService().isFirebaseSignedIn) return;
     if (_products.isEmpty) return;
     try {
       await CloudSyncService().ensureProductsInCloud(_products);
     } catch (e) {
       debugPrint('Product cloud upload error: $e');
+      CloudSyncService().noteReadError('products', e);
+      _onSyncError('products', e.toString());
     }
   }
 
@@ -997,6 +1052,9 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _scheduleTicker?.cancel();
+    _authUidSub?.cancel();
+    _syncErrorToastTimer?.cancel();
+    CloudSyncService().stopListening();
     super.dispose();
   }
 

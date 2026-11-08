@@ -53,6 +53,26 @@ class AuthService extends ChangeNotifier {
   bool get isAuthenticated => _currentUser != null;
   bool get isFirebaseAvailable => _firebaseAvailable;
 
+  /// The uid of the live Firebase session. `currentUser` can be a profile
+  /// restored from prefs while FirebaseAuth has no session at all (guest mode,
+  /// or a session that expired), so Firestore reads must gate on this instead.
+  String? get firebaseUid {
+    try {
+      return FirebaseAuth.instance.currentUser?.uid;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  bool get isFirebaseSignedIn => firebaseUid != null;
+
+  /// Fires with the uid of the live Firebase session, or null when it ends.
+  /// Cloud sync listens to this so Firestore readers only run for a session
+  /// the rules can actually authenticate.
+  final StreamController<String?> _firebaseUidChanges =
+      StreamController<String?>.broadcast();
+  Stream<String?> get firebaseUidChanges => _firebaseUidChanges.stream;
+
   final GoogleSignIn _googleSignIn = GoogleSignIn(
     serverClientId: '1018388763527-25msbi7ertqmog8i1jnhn525vcph7liv.apps.googleusercontent.com',
     scopes: ['email', 'profile'],
@@ -92,6 +112,7 @@ class AuthService extends ChangeNotifier {
 
     if (_firebaseAvailable) {
       FirebaseAuth.instance.authStateChanges().listen((User? user) {
+        _firebaseUidChanges.add(user?.uid);
         if (user != null) {
           _currentUser = AuthUser(
             id: user.uid,

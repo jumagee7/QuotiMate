@@ -4,6 +4,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import '../models.dart';
 
@@ -32,6 +33,45 @@ class CloudSyncService extends ChangeNotifier {
   StreamSubscription? _eventsSub;
   StreamSubscription? _projectsSub;
   StreamSubscription? _settingsSub;
+
+  /// Docs received from each collection since the listeners started, and the
+  /// last read error per collection. Firestore rules are evaluated per
+  /// collection, so one denied read does not mean the others failed.
+  final Map<String, int> _collectionCounts = {};
+  final Map<String, String> _collectionErrors = {};
+  Map<String, int> get collectionCounts => Map.unmodifiable(_collectionCounts);
+  Map<String, String> get collectionErrors => Map.unmodifiable(_collectionErrors);
+
+  void _recordCount(String collection, int count) {
+    final changed = _collectionCounts[collection] != count ||
+        _collectionErrors.containsKey(collection);
+    _collectionCounts[collection] = count;
+    _collectionErrors.remove(collection);
+    if (changed) notifyListeners();
+  }
+
+  /// Stores a read failure and reports it once per attempt. A missing Firebase
+  /// session is called out separately because it is a sign-in problem, not a
+  /// rules problem.
+  void _recordError(
+    String collection,
+    Object error, {
+    void Function(String collection, String error)? onSyncError,
+  }) {
+    final text = FirebaseAuth.instance.currentUser == null
+        ? 'Not signed in to Firebase — sign out and sign in again'
+        : error.toString();
+    _collectionErrors[collection] = text;
+    debugPrint('$collection sync error: $error');
+    onSyncError?.call(collection, text);
+    notifyListeners();
+  }
+
+  /// Reports a read/write rejection raised outside a collection listener, such
+  /// as the product backfill, so it shows up in the per-area status.
+  void noteReadError(String collection, Object error) {
+    _recordError(collection, error);
+  }
 
   // Collections references
   CollectionReference? get _quotesCol =>
@@ -84,9 +124,20 @@ class CloudSyncService extends ChangeNotifier {
     required Function(List<AppEvent>) onEventsUpdated,
     required Function(List<Project>) onProjectsUpdated,
     required Function(Map<String, dynamic>) onSettingsUpdated,
-    void Function(String error)? onProductsError,
+    void Function(String collection, String error)? onSyncError,
   }) {
     if (!_firebaseAvailable) return;
+    // Firestore reads are authorised by the live Firebase session, not by the
+    // profile cached in prefs. Starting listeners before sign-in made every
+    // collection return permission_denied (and only products surfaced it).
+    if (FirebaseAuth.instance.currentUser == null) {
+      debugPrint('Cloud sync skipped: no Firebase session');
+      return;
+    }
+
+    // A fresh listen pass re-reads every collection, so old results are stale.
+    _collectionCounts.clear();
+    _collectionErrors.clear();
 
     // Listen to Quotes
     _quotesSub?.cancel();
@@ -96,8 +147,9 @@ class CloudSyncService extends ChangeNotifier {
         data['id'] = d.id;
         return Quote.fromJson(data);
       }).toList();
+      _recordCount('quotations', quotes.length);
       onQuotesUpdated(quotes);
-    }, onError: (e) => debugPrint('Quotes sync error: $e'));
+    }, onError: (e) => _recordError('quotations', e, onSyncError: onSyncError));
 
     // Listen to Invoices
     _invoicesSub?.cancel();
@@ -107,8 +159,9 @@ class CloudSyncService extends ChangeNotifier {
         data['id'] = d.id;
         return Invoice.fromJson(data);
       }).toList();
+      _recordCount('invoices', invoices.length);
       onInvoicesUpdated(invoices);
-    }, onError: (e) => debugPrint('Invoices sync error: $e'));
+    }, onError: (e) => _recordError('invoices', e, onSyncError: onSyncError));
 
     // Listen to Clients
     _clientsSub?.cancel();
@@ -118,8 +171,9 @@ class CloudSyncService extends ChangeNotifier {
         data['id'] = d.id;
         return Client.fromJson(data);
       }).toList();
+      _recordCount('clients', clients.length);
       onClientsUpdated(clients);
-    }, onError: (e) => debugPrint('Clients sync error: $e'));
+    }, onError: (e) => _recordError('clients', e, onSyncError: onSyncError));
 
     // Listen to Products
     _productsSub?.cancel();
@@ -129,11 +183,9 @@ class CloudSyncService extends ChangeNotifier {
         data['id'] = d.id;
         return Product.fromJson(data);
       }).toList();
+      _recordCount('products', products.length);
       onProductsUpdated(products);
-    }, onError: (e) {
-      debugPrint('Products sync error: $e');
-      onProductsError?.call(e.toString());
-    });
+    }, onError: (e) => _recordError('products', e, onSyncError: onSyncError));
 
     // Listen to Tasks
     _tasksSub?.cancel();
@@ -143,8 +195,9 @@ class CloudSyncService extends ChangeNotifier {
         data['id'] = d.id;
         return AppTask.fromJson(data);
       }).toList();
+      _recordCount('tasks', tasks.length);
       onTasksUpdated(tasks);
-    }, onError: (e) => debugPrint('Tasks sync error: $e'));
+    }, onError: (e) => _recordError('tasks', e, onSyncError: onSyncError));
 
     // Listen to Events / Schedules
     _eventsSub?.cancel();
@@ -154,8 +207,9 @@ class CloudSyncService extends ChangeNotifier {
         data['id'] = d.id;
         return AppEvent.fromJson(data);
       }).toList();
+      _recordCount('schedules', events.length);
       onEventsUpdated(events);
-    }, onError: (e) => debugPrint('Events sync error: $e'));
+    }, onError: (e) => _recordError('schedules', e, onSyncError: onSyncError));
 
     // Listen to Projects
     _projectsSub?.cancel();
@@ -165,17 +219,19 @@ class CloudSyncService extends ChangeNotifier {
         data['id'] = d.id;
         return Project.fromJson(data);
       }).toList();
+      _recordCount('projects', projects.length);
       onProjectsUpdated(projects);
-    }, onError: (e) => debugPrint('Projects sync error: $e'));
+    }, onError: (e) => _recordError('projects', e, onSyncError: onSyncError));
 
     // Listen to Settings & Next Quote Number
     _settingsSub?.cancel();
     _settingsSub = _settingsDoc?.snapshots().listen((snap) {
+      _recordCount('settings', snap.exists ? 1 : 0);
       if (snap.exists) {
         final data = snap.data() as Map<String, dynamic>? ?? {};
         onSettingsUpdated(data);
       }
-    }, onError: (e) => debugPrint('Settings sync error: $e'));
+    }, onError: (e) => _recordError('settings', e, onSyncError: onSyncError));
   }
 
   // ── Sync Operations ────────────────────────────────────────────────────────
@@ -282,37 +338,32 @@ class CloudSyncService extends ChangeNotifier {
   /// Returns the number of products uploaded.
   Future<int> ensureProductsInCloud(List<Product> localProducts) async {
     if (!_firebaseAvailable) return 0;
-    try {
-      final snapshot = await _productsCol?.get();
-      final existingIds = snapshot?.docs.map((d) => d.id).toSet() ?? <String>{};
+    final snapshot = await _productsCol?.get();
+    final existingIds = snapshot?.docs.map((d) => d.id).toSet() ?? <String>{};
 
-      // Purge legacy demo docs that are no longer part of the local catalogue
-      final legacyDocs = snapshot?.docs
-              .where((d) => _legacyProductIds.contains(d.id) && !localProducts.any((p) => p.id == d.id))
-              .toList() ??
-          const [];
-      if (legacyDocs.isNotEmpty) {
-        final purge = FirebaseFirestore.instance.batch();
-        for (final d in legacyDocs) {
-          purge.delete(_productsCol!.doc(d.id));
-        }
-        await purge.commit();
-        debugPrint('Purged ${legacyDocs.length} legacy demo products from cloud');
+    // Purge legacy demo docs that are no longer part of the local catalogue
+    final legacyDocs = snapshot?.docs
+            .where((d) => _legacyProductIds.contains(d.id) && !localProducts.any((p) => p.id == d.id))
+            .toList() ??
+        const [];
+    if (legacyDocs.isNotEmpty) {
+      final purge = FirebaseFirestore.instance.batch();
+      for (final d in legacyDocs) {
+        purge.delete(_productsCol!.doc(d.id));
       }
-
-      final missing = localProducts.where((p) => !existingIds.contains(p.id)).toList();
-      if (missing.isEmpty) return 0;
-      final batch = FirebaseFirestore.instance.batch();
-      for (final p in missing) {
-        batch.set(_productsCol!.doc(p.id), p.toJson(), SetOptions(merge: true));
-      }
-      await batch.commit();
-      debugPrint('Uploaded ${missing.length} products to cloud');
-      return missing.length;
-    } catch (e) {
-      debugPrint('ensureProductsInCloud error: $e');
-      return 0;
+      await purge.commit();
+      debugPrint('Purged ${legacyDocs.length} legacy demo products from cloud');
     }
+
+    final missing = localProducts.where((p) => !existingIds.contains(p.id)).toList();
+    if (missing.isEmpty) return 0;
+    final batch = FirebaseFirestore.instance.batch();
+    for (final p in missing) {
+      batch.set(_productsCol!.doc(p.id), p.toJson(), SetOptions(merge: true));
+    }
+    await batch.commit();
+    debugPrint('Uploaded ${missing.length} products to cloud');
+    return missing.length;
   }
 
   Future<void> saveProduct(Product product) async {
@@ -431,6 +482,9 @@ class CloudSyncService extends ChangeNotifier {
     _eventsSub?.cancel();
     _projectsSub?.cancel();
     _settingsSub?.cancel();
+    _collectionCounts.clear();
+    _collectionErrors.clear();
+    notifyListeners();
   }
 
   @override

@@ -1005,14 +1005,20 @@ class _SettingsPageState extends State<SettingsPage> {
                       ),
                       const SizedBox(height: 3),
                       Text(
-                        appState.userEmail.isNotEmpty
-                            ? appState.userEmail
-                            : (isGuest ? 'Guest Session' : 'Signed in with Google'),
+                        !AuthService().isFirebaseSignedIn
+                            ? (isGuest
+                                ? 'Guest session — local data only'
+                                : 'Session expired — sign in again to sync')
+                            : appState.userEmail.isNotEmpty
+                                ? appState.userEmail
+                                : 'Signed in with Google',
                         style: const TextStyle(color: Color(0xFF616C88), fontSize: 12),
                       ),
                       const SizedBox(height: 12),
-                      // Action button sits below — guaranteed no overlap
-                      if (isGuest)
+                      // Action button sits below — guaranteed no overlap.
+                      // A cached profile is not a session: when Firebase has no
+                      // live user, offer sign-in again instead of Sign Out.
+                      if (isGuest || !AuthService().isFirebaseSignedIn)
                         FilledButton.icon(
                           onPressed: () {
                             Navigator.of(context).pushReplacement(
@@ -1045,29 +1051,92 @@ class _SettingsPageState extends State<SettingsPage> {
               ],
             ),
             const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: const Color(0xFF131722),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: const Color(0xFF2A3045)),
-              ),
-              child: const Row(
-                children: [
-                  Icon(Icons.cloud_done_outlined, color: Color(0xFFFFC107), size: 16),
-                  SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      'All quotations, sequential quote numbers, invoices, schedules, and client records are synchronized in real-time across your team.',
-                      style: TextStyle(color: Color(0xFF8A92A6), fontSize: 11, height: 1.4),
-                    ),
-                  ),
-                ],
-              ),
-            ),
+            _buildCloudAreaStatus(),
           ],
         ),
       ),
+    );
+  }
+
+  static const Map<String, String> _cloudAreas = {
+    'quotations': 'Quotations',
+    'invoices': 'Invoices',
+    'clients': 'Clients',
+    'products': 'Catalogue',
+    'tasks': 'Tasks',
+    'schedules': 'Schedules',
+    'projects': 'Projects',
+    'settings': 'Settings',
+  };
+
+  /// What actually came back from Firestore this session, area by area.
+  /// Without this, a denied collection is indistinguishable from an empty one
+  /// because local cache keeps showing the old records.
+  Widget _buildCloudAreaStatus() {
+    return AnimatedBuilder(
+      animation: CloudSyncService(),
+      builder: (context, _) {
+        final sync = CloudSyncService();
+        final counts = sync.collectionCounts;
+        final errors = sync.collectionErrors;
+        final signedIn = AuthService().isFirebaseSignedIn;
+
+        return Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: const Color(0xFF131722),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: const Color(0xFF2A3045)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Cloud data retrieved this session',
+                style: TextStyle(color: Color(0xFF8A92A6), fontSize: 11, fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 8),
+              if (!signedIn)
+                const Text(
+                  'No Firebase session — local data only. Sign in with Google to sync.',
+                  style: TextStyle(color: Color(0xFFFFC107), fontSize: 11, height: 1.4),
+                )
+              else
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    for (final area in _cloudAreas.entries)
+                      _cloudAreaPill(
+                        area.value,
+                        error: errors[area.key],
+                        count: counts[area.key],
+                      ),
+                  ],
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _cloudAreaPill(String label, {String? error, int? count}) {
+    final denied = error != null;
+    final color = denied
+        ? const Color(0xFFFF6B6B)
+        : count != null
+            ? const Color(0xFF10B981)
+            : const Color(0xFF616C88);
+    final text = denied ? '$label denied' : count != null ? '$label $count' : '$label …';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+      ),
+      child: Text(text, style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w600)),
     );
   }
 
