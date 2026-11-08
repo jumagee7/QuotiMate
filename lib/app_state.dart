@@ -893,6 +893,19 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
         t.alarmEnabled ? Icons.alarm : Icons.task_alt,
         const Color(0xFFFFC107),
       );
+      // Fallback: post an OS tray notification in case the AlarmManager-scheduled
+      // alarm was silently dropped by OEM battery management while the app was
+      // backgrounded. The de-dupe inside showMissedAlarmFallback prevents
+      // duplicates if the scheduled alarm did fire correctly.
+      if (notificationsEnabled) {
+        unawaited(_postMissedAlarmFallback(
+          itemId: t.id,
+          title: t.alarmEnabled ? '⏰ Task alarm' : '🔔 Task due',
+          body: t.title,
+          payload: 'task:${t.id}',
+          isAlarm: t.alarmEnabled,
+        ));
+      }
     }
 
     for (final e in _events) {
@@ -904,6 +917,16 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
           Icons.play_circle_outline,
           e.color,
         );
+        // Fallback OS notification for events whose scheduled alarm was blocked.
+        if (notificationsEnabled) {
+          unawaited(_postMissedAlarmFallback(
+            itemId: e.id,
+            title: e.alarmEnabled ? '⏰ Event alarm' : '🔔 Event started',
+            body: '${e.title} · ${_clockTime(e.startTime)}',
+            payload: 'event:${e.id}',
+            isAlarm: e.alarmEnabled,
+          ));
+        }
       }
       if (now.isAfter(e.endTime) && _seenScheduleStates.add('event_end:${e.id}')) {
         transition(
@@ -922,6 +945,28 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       }
       notifyListeners();
     }
+  }
+
+  /// Posts a fallback OS tray notification when [_checkScheduleStates] detects
+  /// a task or event that is now past-due. This catches alarms that were
+  /// silently dropped by OEM battery management while the app was closed.
+  /// [NotificationService.showMissedAlarmFallback] skips posting if an active
+  /// notification for this [itemId] already exists, so there is no duplicate
+  /// risk if the original [zonedSchedule] alarm fired correctly.
+  Future<void> _postMissedAlarmFallback({
+    required String itemId,
+    required String title,
+    required String body,
+    required String payload,
+    required bool isAlarm,
+  }) async {
+    await NotificationService().showMissedAlarmFallback(
+      id: NotificationService().alertIdFor(itemId),
+      title: title,
+      body: body,
+      payload: payload,
+      isAlarm: isAlarm,
+    );
   }
 
   static String _clockTime(DateTime dt) {

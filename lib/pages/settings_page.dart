@@ -310,8 +310,9 @@ class _SettingsPageState extends State<SettingsPage> {
               const AlarmHealthStatus(),
               const SizedBox(height: 14),
               _switchTile(
-                'Enable In-App Notifications',
-                'Show notification badges and alerts. Switching this off cancels every scheduled alarm.',
+                'Enable Notifications',
+                'Master switch for ALL alerts — in-app feed AND background OS alarms. '
+                    'Turning this off cancels every scheduled alarm immediately.',
                 appState.notificationsEnabled,
                 (val) => appState.updateSettings(notificationsEnabled: val),
                 Icons.notifications_active_outlined,

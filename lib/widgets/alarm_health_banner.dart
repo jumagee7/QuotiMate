@@ -82,7 +82,7 @@ class AlarmHealthStatus extends StatelessWidget {
       runSpacing: 8,
       children: [
         _pill(
-          label: 'In-app alerts',
+          label: 'Notifications on',
           ok: health.inAppAlertsOn,
           icon: health.inAppAlertsOn ? Icons.check_circle : Icons.error_outline,
           onTap: health.inAppAlertsOn
@@ -198,9 +198,9 @@ Future<void> showAlarmFixSheet(BuildContext context, AppState state) async {
       }
       if (!health.inAppAlertsOn) {
         rows.add(_FixRow(
-          title: 'Turn in-app alerts back on',
-          detail: 'This switch is off, and while it is off QuotiMate cancels every '
-              'scheduled alarm instead of queuing it.',
+          title: 'Turn notifications back on',
+          detail: 'The "Enable Notifications" master switch is off. While it is off, '
+              'QuotiMate cancels every scheduled alarm — both background OS alarms and in-app.',
           action: 'Turn on',
           onTap: () => run(() async {
             state.updateSettings(notificationsEnabled: true);
@@ -283,6 +283,20 @@ Future<void> showAlarmFixSheet(BuildContext context, AppState state) async {
           }),
         ));
       }
+
+      // Always show the OEM auto-start row — it is the #1 silent cause of
+      // missed alarms on Tecno, Infinix, Samsung, Xiaomi, Huawei, and Oppo
+      // devices, and cannot be detected programmatically.
+      rows.add(_FixRow(
+        title: 'Allow background start (OEM setting)',
+        detail: 'On Tecno, Infinix, Samsung, Xiaomi, Huawei and Oppo, the '
+            'phone\'s own battery manager silences alarms even when Android '
+            'permission is granted. Find QuotiMate in Auto-start, Background '
+            'app management, or App battery usage and set it to '
+            'Unrestricted / Always allowed.',
+        action: 'Open',
+        onTap: () => run(service.openOemAutoStartSettings),
+      ));
 
       return SafeArea(
         child: Padding(

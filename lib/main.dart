@@ -61,15 +61,18 @@ class _QuotiMateAppState extends State<QuotiMateApp> {
   @override
   void initState() {
     super.initState();
-    // Ask for the Android 13+ notification permission after the first frame so
-    // the system dialog reliably shows with the app in the foreground.
-    // requestPermissions() also auto-requests battery optimization exclusion,
-    // which is the primary reason background alarms are silently dropped on
-    // OEM devices (Samsung One UI, Huawei EMUI/HarmonyOS, Xiaomi MIUI, etc.).
+    // Ask for all alarm-related permissions after the first frame so system
+    // dialogs show with the app in the foreground:
+    //  • POST_NOTIFICATIONS (Android 13+) — required to post any alert at all.
+    //  • Battery optimization exclusion — #1 silent alarm killer on OEM devices
+    //    (Samsung One UI, Huawei EMUI/HarmonyOS, Xiaomi MIUI, Oppo ColorOS…).
+    //  • SCHEDULE_EXACT_ALARM (Android 12+) — without it alarms can arrive late.
+    //  • USE_FULL_SCREEN_INTENT (Android 14+) — without it an alarm can only post
+    //    a heads-up card in the shade instead of taking over the lock screen.
     // Re-reading the health afterwards keeps the Settings pills honest instead
     // of reporting the pre-grant state.
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      await NotificationService().requestPermissions();
+      await NotificationService().requestPermissions(askFullScreen: true);
       await _state.refreshAlarmHealth();
     });
   }

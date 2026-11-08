@@ -3,6 +3,7 @@ package com.majumaink.quotimate
 import android.app.ActivityManager
 import android.app.KeyguardManager
 import android.app.NotificationManager
+import android.content.ComponentName
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
@@ -230,8 +231,80 @@ class MainActivity : FlutterActivity() {
                         result.error("UNINSTALL_ERROR", e.message, null)
                     }
                 }
+                "openOemAutoStartSettings" -> {
+                    // Attempts to open the OEM-specific "Auto-start" or "Background app
+                    // management" screen where the user must whitelist QuotiMate.
+                    // Returns true if the screen was opened, false if the OEM is unknown.
+                    val intent = getOemAutoStartIntent()
+                    if (intent != null) {
+                        try {
+                            startActivity(intent)
+                            result.success(true)
+                        } catch (e: Exception) {
+                            result.error("OEM_SETTINGS_ERROR", e.message, null)
+                        }
+                    } else {
+                        result.success(false)
+                    }
+                }
                 else -> result.notImplemented()
             }
+        }
+    }
+
+    /**
+     * Returns an Intent that opens the manufacturer-specific "Auto-start" or
+     * "Background app management" screen, or null if the OEM is unknown.
+     * The caller must wrap [startActivity] in a try/catch because the
+     * component may not exist on every firmware variant.
+     */
+    private fun getOemAutoStartIntent(): Intent? {
+        val manufacturer = Build.MANUFACTURER.lowercase()
+        return when {
+            manufacturer.contains("xiaomi") || manufacturer.contains("redmi") ->
+                Intent().apply {
+                    component = ComponentName(
+                        "com.miui.securitycenter",
+                        "com.miui.permcenter.autostart.AutoStartManagementActivity"
+                    )
+                }
+            manufacturer.contains("oppo") || manufacturer.contains("realme") ->
+                Intent().apply {
+                    component = ComponentName(
+                        "com.coloros.safecenter",
+                        "com.coloros.safecenter.permission.startup.FakeActivity"
+                    )
+                }
+            manufacturer.contains("vivo") ->
+                Intent().apply {
+                    component = ComponentName(
+                        "com.vivo.permissionmanager",
+                        "com.vivo.permissionmanager.activity.PurviewTabActivity"
+                    )
+                }
+            manufacturer.contains("huawei") || manufacturer.contains("honor") ->
+                Intent().apply {
+                    component = ComponentName(
+                        "com.huawei.systemmanager",
+                        "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity"
+                    )
+                }
+            manufacturer.contains("samsung") ->
+                Intent().apply {
+                    component = ComponentName(
+                        "com.samsung.android.lool",
+                        "com.samsung.android.sm.battery.ui.BatteryActivity"
+                    )
+                }
+            manufacturer.contains("tecno") || manufacturer.contains("infinix") ||
+                    manufacturer.contains("itel") ->
+                Intent().apply {
+                    component = ComponentName(
+                        "com.transsion.powermanager",
+                        "com.transsion.powermanager.MainActivity"
+                    )
+                }
+            else -> null
         }
     }
 

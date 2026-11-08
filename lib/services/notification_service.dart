@@ -8,7 +8,6 @@ import 'package:timezone/data/latest_all.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
 import 'dart:async';
 import 'dart:io' show Platform;
-import 'dart:typed_data';
 
 /// `Notification.FLAG_INSISTENT`: keeps the alarm sound looping until the
 /// notification is dismissed, so an alarm cannot buzz once and vanish.
@@ -84,7 +83,8 @@ class AlarmHealth {
   final bool batteryExcluded;
   final int pendingAlerts;
 
-  /// AppState's "Enable In-App Notifications" switch. Off cancels every alarm.
+  /// AppState's "Enable Notifications" master switch. Off cancels every alarm — both
+  /// in-app feed entries AND background OS alarms via AlarmManager.
   final bool inAppAlertsOn;
 
   /// AppState's "Ring & Buzz Alarms" switch. Off degrades alarms to cards.
@@ -120,7 +120,7 @@ class AlarmHealth {
   List<String> get blockers => <String>[
         if (!pluginReady) 'The notification plugin failed to start',
         if (!inAppAlertsOn)
-          'In-app notifications are switched off, which cancels every alarm',
+          'Notifications are disabled in app settings — this cancels every alarm (background and in-app)',
         if (!notificationsAllowed) 'Notifications are switched off for QuotiMate',
         if (!alarmChannelActive) 'The QuotiMate Alarms channel is muted or silent',
         if (!reminderChannelActive) 'The QuotiMate Reminders channel is muted or silent',
@@ -539,7 +539,7 @@ class NotificationService {
     final parts = <String>[
       if (!health.pluginReady && health.pluginError != null)
         'PLUGIN OFFLINE: ${health.pluginError}',
-      if (!health.inAppAlertsOn) 'BLOCKED: in-app alerts are off, cancelling every alarm',
+      if (!health.inAppAlertsOn) 'BLOCKED: notifications disabled in app settings, cancelling every alarm',
       health.notificationsAllowed
           ? 'Notifications allowed'
           : 'BLOCKED: notifications are switched off for QuotiMate',
@@ -831,10 +831,10 @@ class NotificationService {
     await init();
     if (!_isSupported) return 'This platform has no local notification support.';
     if (!_initialized) return 'Notification plugin failed to start: $_initError';
-    // The in-app master switch arms nothing, and the next resume cancels the
-    // queue — so a probe armed while it is off could never fire.
+    // The master notifications switch arms nothing when off, and the next app
+    // resume cancels the queue — so a probe armed while it is off could never fire.
     if (!appEnabled) {
-      return 'Background alerts are off: turn on "Enable In-App Notifications" first.';
+      return 'Background alerts are off: turn on "Enable Notifications" in Settings first.';
     }
 
     final targetTime = DateTime.now().add(Duration(seconds: seconds));
@@ -881,6 +881,23 @@ class NotificationService {
     }
   }
 
+  /// Opens the OEM-specific "Auto-start" / "Background app management" screen
+  /// for the current manufacturer. Returns true when the screen was launched,
+  /// false when the device has no known OEM screen (stock Android).
+  Future<bool> openOemAutoStartSettings() async {
+    if (!Platform.isAndroid) return false;
+    try {
+      final bool? launched =
+          await _deviceChannel.invokeMethod<bool>('openOemAutoStartSettings');
+      return launched ?? false;
+    } catch (e) {
+      debugPrint('openOemAutoStartSettings failed: $e');
+      // Fall back to general battery settings so the call is never a dead end.
+      await requestIgnoreBatteryOptimizations();
+      return false;
+    }
+  }
+
   Future<void> showInstantNotification({
     required int id,
     required String title,
@@ -899,6 +916,63 @@ class NotificationService {
     } catch (e) {
       _lastError = e.toString();
       debugPrint('Failed to show instant notification: $e');
+    }
+  }
+
+  /// Posts an immediate alarm-style notification for an item whose scheduled
+  /// alarm was silently dropped by the OS (OEM battery management, Doze race,
+  /// etc.). Unlike the scheduled alarm this does NOT set [ongoing] or loop
+  /// sound — it is a one-shot "you missed this" fallback, not a replacement
+  /// for the full alarm experience.
+  Future<void> showMissedAlarmFallback({
+    required int id,
+    required String title,
+    required String body,
+    required String payload,
+    required bool isAlarm,
+  }) async {
+    if (!_initialized) await init();
+    if (!_isSupported) return;
+
+    // Skip if the notification is already on screen (the scheduled alarm DID
+    // fire — no duplicate needed).
+    try {
+      final active = await _localNotifications.getActiveNotifications();
+      if (active.any((n) => n.id == id)) return;
+    } catch (_) {}
+
+    try {
+      // Use alarm channel for alarm items so the sound matches expectations;
+      // reminder channel for ordinary reminders.
+      final details = isAlarm
+          ? AndroidNotificationDetails(
+              _alarmChannelId,
+              'QuotiMate Alarms',
+              channelDescription: 'Full-screen alarms that ring and vibrate until stopped',
+              importance: Importance.max,
+              priority: Priority.max,
+              icon: _smallIcon,
+              category: AndroidNotificationCategory.alarm,
+              visibility: NotificationVisibility.public,
+              enableVibration: true,
+              playSound: true,
+              audioAttributesUsage: AudioAttributesUsage.alarm,
+              autoCancel: true,
+              ticker: 'Missed alarm',
+            )
+          : _reminderDetails();
+
+      await _localNotifications.show(
+        id: id,
+        title: title,
+        body: body,
+        notificationDetails: NotificationDetails(android: details),
+        payload: payload,
+      );
+      debugPrint('Fallback notification posted for id=$id title="$title"');
+    } catch (e) {
+      _lastError = e.toString();
+      debugPrint('Failed to show fallback notification: $e');
     }
   }
 
