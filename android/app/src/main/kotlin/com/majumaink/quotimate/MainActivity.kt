@@ -1,6 +1,8 @@
 package com.majumaink.quotimate
 
+import android.app.ActivityManager
 import android.app.KeyguardManager
+import android.app.NotificationManager
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
@@ -120,6 +122,62 @@ class MainActivity : FlutterActivity() {
                         result.success(true)
                     } catch (e: Exception) {
                         result.error("NOTIFICATION_SETTINGS_ERROR", e.message, null)
+                    }
+                }
+                "openChannelSettings" -> {
+                    val channelId = call.argument<String>("channelId")
+                    try {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && channelId != null) {
+                            val intent = Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS).apply {
+                                putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+                                putExtra(Settings.EXTRA_CHANNEL_ID, channelId)
+                            }
+                            startActivity(intent)
+                        } else {
+                            startActivity(
+                                Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                                    putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+                                }
+                            )
+                        }
+                        result.success(true)
+                    } catch (e: Exception) {
+                        result.error("CHANNEL_SETTINGS_ERROR", e.message, null)
+                    }
+                }
+                "openDoNotDisturbSettings" -> {
+                    try {
+                        startActivity(Intent(Settings.ACTION_ZEN_MODE_PRIORITY_SETTINGS))
+                        result.success(true)
+                    } catch (e: Exception) {
+                        try {
+                            startActivity(Intent(Settings.ACTION_SOUND_SETTINGS))
+                            result.success(true)
+                        } catch (e2: Exception) {
+                            result.error("DND_SETTINGS_ERROR", e2.message, null)
+                        }
+                    }
+                }
+                // Read-only checks. None of these need a special permission.
+                "getInterruptionFilter" -> {
+                    val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                    result.success(nm.currentInterruptionFilter)
+                }
+                "canUseFullScreenIntent" -> {
+                    if (Build.VERSION.SDK_INT >= 34) {
+                        val nm =
+                            getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                        result.success(nm.canUseFullScreenIntent())
+                    } else {
+                        result.success(true)
+                    }
+                }
+                "isBackgroundRestricted" -> {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                        val am = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+                        result.success(am.isBackgroundRestricted)
+                    } else {
+                        result.success(false)
                     }
                 }
                 "canInstallPackages" -> {                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

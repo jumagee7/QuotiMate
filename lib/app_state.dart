@@ -387,7 +387,17 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   /// Re-reads the Android switches that decide whether a background alert can
   /// reach the user, so the UI can point at the exact blocker.
   Future<void> refreshAlarmHealth() async {
-    final health = await NotificationService().checkAlarmHealth();
+    // The health view must include the app's own switches: turning either off
+    // changes delivery just as much as an Android permission does.
+    final anyAlarm = _tasks.any(
+          (t) => t.status != TaskStatus.done && t.alarmEnabled,
+        ) ||
+        _events.any((e) => e.alarmEnabled);
+    final health = await NotificationService().checkAlarmHealth(
+      inAppAlertsOn: notificationsEnabled,
+      alarmBuzzOn: alarmBuzzEnabled,
+      needsFullScreen: alarmBuzzEnabled && anyAlarm,
+    );
     if (health == null) return;
     _alarmHealth = health;
     notifyListeners();
@@ -970,11 +980,13 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       this.notificationsEnabled = notificationsEnabled;
       // Flipping the master switch must arm or tear down every pending alarm.
       _rescheduleAllNotifications();
+      refreshAlarmHealth();
     }
     if (alarmBuzzEnabled    != null) {
       this.alarmBuzzEnabled   = alarmBuzzEnabled;
       // Existing alarms were queued with the old ring behaviour.
       _rescheduleAllNotifications();
+      refreshAlarmHealth();
     }
     if (nextQuoteNumber     != null) this.nextQuoteNumber     = nextQuoteNumber;
     _save();

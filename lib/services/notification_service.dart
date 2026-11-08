@@ -64,34 +64,75 @@ class AlarmHealth {
     required this.reminderChannelActive,
     required this.batteryExcluded,
     required this.pendingAlerts,
+    this.inAppAlertsOn = true,
+    this.alarmBuzzOn = true,
+    this.fullScreenAllowed = true,
+    this.restrictedBucket = false,
+    this.doNotDisturbSilent = false,
     this.pluginError,
   });
 
   final bool pluginReady;
   final bool notificationsAllowed;
   final bool exactAllowed;
+
+  /// False when the channel is muted or its importance/sound was lowered in
+  /// Android settings. Android freezes those choices, so the app cannot undo
+  /// them — they have to be shown instead.
   final bool alarmChannelActive;
   final bool reminderChannelActive;
   final bool batteryExcluded;
   final int pendingAlerts;
+
+  /// AppState's "Enable In-App Notifications" switch. Off cancels every alarm.
+  final bool inAppAlertsOn;
+
+  /// AppState's "Ring & Buzz Alarms" switch. Off degrades alarms to cards.
+  final bool alarmBuzzOn;
+
+  /// Android 14+ full-screen-intent access. Without it an alarm can only post
+  /// a heads-up card instead of taking over the screen.
+  final bool fullScreenAllowed;
+
+  /// App-standby "Restricted" bucket — separate from battery optimisation, and
+  /// it can hold alarms until the app is opened.
+  final bool restrictedBucket;
+
+  /// Do Not Disturb in "Total silence", which mutes alarms as well.
+  final bool doNotDisturbSilent;
+
   final String? pluginError;
+
+  bool get batteryFree => batteryExcluded && !restrictedBucket;
 
   bool get healthy =>
       pluginReady &&
+      inAppAlertsOn &&
       notificationsAllowed &&
       exactAllowed &&
       alarmChannelActive &&
       reminderChannelActive &&
-      batteryExcluded;
+      batteryFree &&
+      fullScreenAllowed &&
+      alarmBuzzOn &&
+      !doNotDisturbSilent;
 
   List<String> get blockers => <String>[
         if (!pluginReady) 'The notification plugin failed to start',
+        if (!inAppAlertsOn)
+          'In-app notifications are switched off, which cancels every alarm',
         if (!notificationsAllowed) 'Notifications are switched off for QuotiMate',
+        if (!alarmChannelActive) 'The QuotiMate Alarms channel is muted or silent',
+        if (!reminderChannelActive) 'The QuotiMate Reminders channel is muted or silent',
         if (!exactAllowed) 'Android denies exact alarms, so alerts can be delayed',
-        if (!alarmChannelActive) 'The QuotiMate Alarms channel is muted',
-        if (!reminderChannelActive) 'The QuotiMate Reminders channel is muted',
         if (!batteryExcluded)
           'Battery optimisation can freeze QuotiMate in the background',
+        if (restrictedBucket) 'Android put QuotiMate in the Restricted battery bucket',
+        if (!fullScreenAllowed)
+          'Android blocks full-screen alarms, so they only post a heads-up card',
+        if (!alarmBuzzOn) 'Alarms are set to notify only instead of ringing',
+        if (doNotDisturbSilent)
+          'Do Not Disturb is set to Total silence, which mutes alarms',
       ];
 }
 
@@ -375,7 +416,15 @@ class NotificationService {
 
   /// Reads every OS switch that can delay or drop an alert so the UI can name
   /// the exact blocker. Returns null when local notifications are unavailable.
-  Future<AlarmHealth?> checkAlarmHealth() async {
+  ///
+  /// [inAppAlertsOn] / [alarmBuzzOn] come from AppState's own switches so the
+  /// health view cannot stay green while the app has cancelled its alarms.
+  /// [needsFullScreen] is true when at least one alarm is armed with buzz on.
+  Future<AlarmHealth?> checkAlarmHealth({
+    bool inAppAlertsOn = true,
+    bool alarmBuzzOn = true,
+    bool needsFullScreen = false,
+  }) async {
     if (!_initialized) await init();
     if (!_isSupported) return null;
 
@@ -398,18 +447,46 @@ class NotificationService {
       batteryExcluded = await isIgnoringBatteryOptimizations();
     } catch (_) {}
 
-    // A channel the user muted in Android settings keeps accepting posts while
-    // silently dropping them, which looks exactly like "alerts only work while
-    // the app is open".
+    // "Restricted" is a second, separate battery state (App info → Battery).
+    var restrictedBucket = false;
+    try {
+      restrictedBucket =
+          await _deviceChannel.invokeMethod<bool>('isBackgroundRestricted') ?? false;
+    } catch (_) {}
+
+    // A channel the user muted, lowered to silent, or stripped of sound keeps
+    // accepting posts while dropping the sound/heads-up. Android freezes those
+    // choices, so the app can only report them.
     var alarmChannelActive = true;
     var reminderChannelActive = true;
     try {
       final channels = await android.getNotificationChannels();
       final alarm = channels?.where((c) => c.id == _alarmChannelId).firstOrNull;
       final reminder = channels?.where((c) => c.id == _reminderChannelId).firstOrNull;
-      alarmChannelActive = alarm == null || alarm.importance != Importance.none;
-      reminderChannelActive = reminder == null || reminder.importance != Importance.none;
+      alarmChannelActive = alarm == null ||
+          (alarm.importance.value >= Importance.high.value && alarm.playSound);
+      reminderChannelActive = reminder == null ||
+          (reminder.importance.value >= Importance.defaultImportance.value &&
+              reminder.playSound);
     } catch (_) {}
+
+    // Total silence mutes alarms too; priority-only and alarms-only leave them
+    // alone, so only filter NONE (3) is reported.
+    var doNotDisturbSilent = false;
+    try {
+      doNotDisturbSilent =
+          await _deviceChannel.invokeMethod<int>('getInterruptionFilter') == 3;
+    } catch (_) {}
+
+    // Android 14+ can strip full-screen access even with USE_FULL_SCREEN_INTENT
+    // declared. Only relevant while an alarm is actually armed.
+    var fullScreenAllowed = true;
+    if (needsFullScreen) {
+      try {
+        fullScreenAllowed =
+            await _deviceChannel.invokeMethod<bool>('canUseFullScreenIntent') ?? true;
+      } catch (_) {}
+    }
 
     // Counts what Android itself is holding. Zero means the app never handed an
     // alarm over, which is a different fault than a blocked channel.
@@ -426,33 +503,57 @@ class NotificationService {
       reminderChannelActive: reminderChannelActive,
       batteryExcluded: batteryExcluded,
       pendingAlerts: pending,
+      inAppAlertsOn: inAppAlertsOn,
+      alarmBuzzOn: alarmBuzzOn,
+      fullScreenAllowed: fullScreenAllowed,
+      restrictedBucket: restrictedBucket,
+      doNotDisturbSilent: doNotDisturbSilent,
       pluginError: _initError,
     );
   }
 
   /// OS-level switches that stop alerts without the app failing loudly.
   /// Returns null when they cannot be read (non-Android).
-  Future<String?> diagnosticSummary() async {
-    final health = await checkAlarmHealth();
+  Future<String?> diagnosticSummary({
+    bool inAppAlertsOn = true,
+    bool alarmBuzzOn = true,
+  }) async {
+    final health = await checkAlarmHealth(
+      inAppAlertsOn: inAppAlertsOn,
+      alarmBuzzOn: alarmBuzzOn,
+    );
     if (health == null) return null;
 
-    final plugin =
-        !health.pluginReady ? 'PLUGIN OFFLINE: ${health.pluginError} · ' : '';
     final exact = health.exactAllowed
         ? 'exact alarms allowed'
         : 'DEGRADED: Android denies exact alarms, alerts can be late';
     final alarmChannel = health.alarmChannelActive
-        ? 'alarm channel active'
-        : 'BLOCKED: the QuotiMate Alarms channel is muted in Android settings';
+        ? 'alarm channel audible'
+        : 'BLOCKED: the QuotiMate Alarms channel is muted or silent in Android settings';
     final armed = health.pendingAlerts == 0
         ? 'no alerts queued with Android'
         : '${health.pendingAlerts} alert(s) queued with Android';
     final batteryStatus = health.batteryExcluded
         ? 'battery optimization excluded'
         : 'DEGRADED: battery optimization active (background alarms may be delayed or dropped)';
-    return '$plugin'
-        '${health.notificationsAllowed ? 'Notifications allowed' : 'BLOCKED: notifications are switched off for QuotiMate'}'
-        ' · $exact · $alarmChannel · $armed · $batteryStatus · icon: $_smallIcon';
+    final parts = <String>[
+      if (!health.pluginReady && health.pluginError != null)
+        'PLUGIN OFFLINE: ${health.pluginError}',
+      if (!health.inAppAlertsOn) 'BLOCKED: in-app alerts are off, cancelling every alarm',
+      health.notificationsAllowed
+          ? 'Notifications allowed'
+          : 'BLOCKED: notifications are switched off for QuotiMate',
+      exact,
+      alarmChannel,
+      armed,
+      batteryStatus,
+      if (health.restrictedBucket) 'BLOCKED: app is in the Restricted battery bucket',
+      if (!health.fullScreenAllowed) 'DEGRADED: Android blocks full-screen alarms',
+      if (!health.alarmBuzzOn) 'DEGRADED: alarms post as cards instead of ringing',
+      if (health.doNotDisturbSilent) 'BLOCKED: Do Not Disturb is set to Total silence',
+      'icon: $_smallIcon',
+    ];
+    return parts.join(' · ');
   }
 
   static const String _alarmChannelId = 'quotimate_alarms_v3';
@@ -536,12 +637,12 @@ class NotificationService {
 
   /// Posts an immediate alert and reports whether Android really displayed it,
   /// so the Settings test button cannot pass while device alerts are broken.
-  Future<String> showTestNotification() async {
+  Future<String> showTestNotification({bool appEnabled = true}) async {
     await init();
     if (!_isSupported) return 'This platform has no local notification support.';
     if (!_initialized) return 'Notification plugin failed to start: $_initError';
 
-    final access = await diagnosticSummary();
+    final access = await diagnosticSummary(inAppAlertsOn: appEnabled);
     try {
       await _localNotifications.show(
         id: _testNotificationId,
@@ -646,6 +747,47 @@ class NotificationService {
     }
   }
 
+  /// Opens one channel's own screen, where importance, sound and vibration are
+  /// set. Android froze our requested values at channel creation, so a channel
+  /// the user lowered can only be raised from here.
+  Future<void> openChannelSettings(String channelId) async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _deviceChannel.invokeMethod('openChannelSettings', {'channelId': channelId});
+    } catch (e) {
+      debugPrint('Failed to open channel settings: $e');
+      await openNotificationSettings();
+    }
+  }
+
+  Future<void> openAlarmChannelSettings() => openChannelSettings(_alarmChannelId);
+
+  Future<void> openReminderChannelSettings() => openChannelSettings(_reminderChannelId);
+
+  /// Opens the "Full screen notifications" special access screen (Android 14+),
+  /// without which an alarm can only post a heads-up card.
+  Future<void> openFullScreenIntentSettings() async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _localNotifications
+          .resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin>()
+          ?.requestFullScreenIntentPermission();
+    } catch (e) {
+      debugPrint('Failed to open full-screen intent settings: $e');
+    }
+  }
+
+  /// Opens the Do Not Disturb screen so "Total silence" can be undone.
+  Future<void> openDoNotDisturbSettings() async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _deviceChannel.invokeMethod('openDoNotDisturbSettings');
+    } catch (e) {
+      debugPrint('Failed to open Do Not Disturb settings: $e');
+    }
+  }
+
   /// Ends the over-lock-screen mode entered by a ringing alarm. If the phone is
   /// still locked, the app returns to the keyguard instead of staying visible.
   Future<void> leaveAlarmLockScreen() async {
@@ -681,10 +823,19 @@ class NotificationService {
 
   /// Schedules a test alert [seconds] into the future so the user can minimize
   /// or lock the phone to verify out-of-focus / background notification delivery.
-  Future<String> scheduleTestNotification({int seconds = 10, bool alarm = false}) async {
+  Future<String> scheduleTestNotification({
+    int seconds = 10,
+    bool alarm = false,
+    bool appEnabled = true,
+  }) async {
     await init();
     if (!_isSupported) return 'This platform has no local notification support.';
     if (!_initialized) return 'Notification plugin failed to start: $_initError';
+    // The in-app master switch arms nothing, and the next resume cancels the
+    // queue — so a probe armed while it is off could never fire.
+    if (!appEnabled) {
+      return 'Background alerts are off: turn on "Enable In-App Notifications" first.';
+    }
 
     final targetTime = DateTime.now().add(Duration(seconds: seconds));
     final result = await _scheduleSingleReminder(
@@ -1067,12 +1218,14 @@ class NotificationService {
     }
   }
 
+  /// Drops every queued alert but leaves cards already on screen (a ringing
+  /// alarm, the download bar) alone. `cancelAll()` used to take those too.
   Future<void> cancelAllReminders() async {
     if (!_initialized || !_isSupported) return;
     try {
-      await _localNotifications.cancelAll();
+      await _localNotifications.cancelAllPendingNotifications();
     } catch (e) {
-      debugPrint('cancelAll failed: $e');
+      debugPrint('cancelAllPendingNotifications failed: $e');
     }
   }
 }

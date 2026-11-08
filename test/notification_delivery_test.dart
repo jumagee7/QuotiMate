@@ -41,6 +41,11 @@ void main() {
     bool alarmChannelActive = true,
     bool reminderChannelActive = true,
     bool batteryExcluded = true,
+    bool inAppAlertsOn = true,
+    bool alarmBuzzOn = true,
+    bool fullScreenAllowed = true,
+    bool restrictedBucket = false,
+    bool doNotDisturbSilent = false,
   }) =>
       AlarmHealth(
         pluginReady: pluginReady,
@@ -49,6 +54,11 @@ void main() {
         alarmChannelActive: alarmChannelActive,
         reminderChannelActive: reminderChannelActive,
         batteryExcluded: batteryExcluded,
+        inAppAlertsOn: inAppAlertsOn,
+        alarmBuzzOn: alarmBuzzOn,
+        fullScreenAllowed: fullScreenAllowed,
+        restrictedBucket: restrictedBucket,
+        doNotDisturbSilent: doNotDisturbSilent,
         pendingAlerts: 0,
       );
 
@@ -69,5 +79,27 @@ void main() {
     expect(health(notificationsAllowed: false).blockers.single, contains('Notifications are switched off'));
     expect(health(alarmChannelActive: false).blockers.single, contains('Alarms channel'));
     expect(health(reminderChannelActive: false).blockers.single, contains('Reminders channel'));
+  });
+
+  test('app switches cannot stay green while alarms are cancelled or demoted',
+      () {
+    final disabled = health(inAppAlertsOn: false);
+    expect(disabled.healthy, isFalse);
+    expect(disabled.blockers.single, contains('cancels every alarm'));
+
+    final buzzOff = health(alarmBuzzOn: false);
+    expect(buzzOff.healthy, isFalse);
+    expect(buzzOff.blockers.single, contains('notify only'));
+  });
+
+  test('Android 14 full-screen access, restricted bucket and total silence block',
+      () {
+    expect(health(fullScreenAllowed: false).blockers.single, contains('full-screen'));
+    final restricted = health(restrictedBucket: true);
+    expect(restricted.healthy, isFalse);
+    expect(restricted.blockers.single, contains('Restricted'));
+    final dnd = health(doNotDisturbSilent: true);
+    expect(dnd.healthy, isFalse);
+    expect(dnd.blockers.single, contains('Total silence'));
   });
 }

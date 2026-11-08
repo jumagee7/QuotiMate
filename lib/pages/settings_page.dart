@@ -329,7 +329,9 @@ class _SettingsPageState extends State<SettingsPage> {
                 onPressed: () async {
                   final service = NotificationService();
                   await service.requestPermissions();
-                  final result = await service.showTestNotification();
+                  final result = await service.showTestNotification(
+                    appEnabled: appState.notificationsEnabled,
+                  );
                   final delivered = result.startsWith('Device alert displayed');
                   appState.pushNotification(
                     key: 'n_test_${DateTime.now().millisecondsSinceEpoch}',
@@ -382,7 +384,10 @@ class _SettingsPageState extends State<SettingsPage> {
                 onPressed: () async {
                   final service = NotificationService();
                   await service.requestPermissions();
-                  final result = await service.scheduleTestNotification(seconds: 10);
+                  final result = await service.scheduleTestNotification(
+                    seconds: 10,
+                    appEnabled: appState.notificationsEnabled,
+                  );
                   final isArmed = result.startsWith('Armed for');
                   appState.pushNotification(
                     key: 'n_bg_test_${DateTime.now().millisecondsSinceEpoch}',

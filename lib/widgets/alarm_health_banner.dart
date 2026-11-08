@@ -57,7 +57,8 @@ class AlarmHealthBanner extends StatelessWidget {
   }
 }
 
-/// Three tappable status pills for the Settings notification card.
+/// Tappable status pills for the Settings notification card. Every switch that
+/// can hold an alert back gets a pill, including the app's own two switches.
 class AlarmHealthStatus extends StatelessWidget {
   const AlarmHealthStatus({super.key});
 
@@ -67,7 +68,9 @@ class AlarmHealthStatus extends StatelessWidget {
     final health = state.alarmHealth;
     if (health == null) return const SizedBox.shrink();
     final service = NotificationService();
-    final channelsOk = health.notificationsAllowed && health.alarmChannelActive && health.reminderChannelActive;
+    final androidOk = health.notificationsAllowed &&
+        health.alarmChannelActive &&
+        health.reminderChannelActive;
 
     Future<void> fix(Future<void> Function() action) async {
       await action();
@@ -79,10 +82,30 @@ class AlarmHealthStatus extends StatelessWidget {
       runSpacing: 8,
       children: [
         _pill(
-          label: 'Notifications',
-          ok: channelsOk,
-          icon: channelsOk ? Icons.check_circle : Icons.error_outline,
-          onTap: channelsOk ? null : () => fix(service.openNotificationSettings),
+          label: 'In-app alerts',
+          ok: health.inAppAlertsOn,
+          icon: health.inAppAlertsOn ? Icons.check_circle : Icons.error_outline,
+          onTap: health.inAppAlertsOn
+              ? null
+              : () => fix(() async {
+                    state.updateSettings(notificationsEnabled: true);
+                  }),
+        ),
+        _pill(
+          label: 'Android notifications',
+          ok: androidOk,
+          icon: androidOk ? Icons.check_circle : Icons.error_outline,
+          onTap: androidOk ? null : () => fix(service.openNotificationSettings),
+        ),
+        _pill(
+          label: 'Alarms ring',
+          ok: health.alarmBuzzOn,
+          icon: health.alarmBuzzOn ? Icons.check_circle : Icons.error_outline,
+          onTap: health.alarmBuzzOn
+              ? null
+              : () => fix(() async {
+                    state.updateSettings(alarmBuzzEnabled: true);
+                  }),
         ),
         _pill(
           label: 'Exact alarms',
@@ -91,11 +114,28 @@ class AlarmHealthStatus extends StatelessWidget {
           onTap: health.exactAllowed ? null : () => fix(service.openExactAlarmSettings),
         ),
         _pill(
-          label: 'Battery unrestricted',
-          ok: health.batteryExcluded,
-          icon: health.batteryExcluded ? Icons.check_circle : Icons.error_outline,
-          onTap: health.batteryExcluded ? null : () => fix(service.requestIgnoreBatteryOptimizations),
+          label: 'Full-screen',
+          ok: health.fullScreenAllowed,
+          icon: health.fullScreenAllowed ? Icons.check_circle : Icons.error_outline,
+          onTap: health.fullScreenAllowed
+              ? null
+              : () => fix(service.openFullScreenIntentSettings),
         ),
+        _pill(
+          label: 'Battery unrestricted',
+          ok: health.batteryFree,
+          icon: health.batteryFree ? Icons.check_circle : Icons.error_outline,
+          onTap: health.batteryFree
+              ? null
+              : () => fix(service.requestIgnoreBatteryOptimizations),
+        ),
+        if (health.doNotDisturbSilent)
+          _pill(
+            label: 'DND is silent',
+            ok: false,
+            icon: Icons.do_not_disturb_on_outlined,
+            onTap: () => fix(service.openDoNotDisturbSettings),
+          ),
       ],
     );
   }
@@ -156,6 +196,17 @@ Future<void> showAlarmFixSheet(BuildContext context, AppState state) async {
           action: 'OK',
         ));
       }
+      if (!health.inAppAlertsOn) {
+        rows.add(_FixRow(
+          title: 'Turn in-app alerts back on',
+          detail: 'This switch is off, and while it is off QuotiMate cancels every '
+              'scheduled alarm instead of queuing it.',
+          action: 'Turn on',
+          onTap: () => run(() async {
+            state.updateSettings(notificationsEnabled: true);
+          }),
+        ));
+      }
       if (!health.notificationsAllowed) {
         rows.add(_FixRow(
           title: 'Turn notifications on',
@@ -166,10 +217,23 @@ Future<void> showAlarmFixSheet(BuildContext context, AppState state) async {
       }
       if (!health.alarmChannelActive || !health.reminderChannelActive) {
         rows.add(_FixRow(
-          title: 'Unmute the QuotiMate channels',
-          detail: 'A muted channel accepts alerts and silently drops them.',
+          title: 'Raise the QuotiMate channels',
+          detail: 'A channel the user muted, lowered to Silent, or stripped of '
+              'sound keeps accepting alerts and drops them. Android keeps the '
+              'old setting, so raise it here.',
           action: 'Open',
-          onTap: () => run(service.openNotificationSettings),
+          onTap: () => run(!health.alarmChannelActive
+              ? service.openAlarmChannelSettings
+              : service.openReminderChannelSettings),
+        ));
+      }
+      if (!health.fullScreenAllowed) {
+        rows.add(_FixRow(
+          title: 'Allow full-screen alarms',
+          detail: 'Android 14+ is keeping alarms in the shade. Allow "Full screen '
+              'notifications" so an alarm can take over the lock screen.',
+          action: 'Open',
+          onTap: () => run(service.openFullScreenIntentSettings),
         ));
       }
       if (!health.exactAllowed) {
@@ -188,6 +252,35 @@ Future<void> showAlarmFixSheet(BuildContext context, AppState state) async {
               'can hold its alarms until the app is opened.',
           action: 'Open',
           onTap: () => run(service.requestIgnoreBatteryOptimizations),
+        ));
+      }
+      if (health.restrictedBucket) {
+        rows.add(_FixRow(
+          title: 'Leave the Restricted battery bucket',
+          detail: 'Android flagged QuotiMate as Restricted. Set App info → '
+              'Battery to Unrestricted so alarms are not held until launch.',
+          action: 'Open',
+          onTap: () => run(service.requestIgnoreBatteryOptimizations),
+        ));
+      }
+      if (health.doNotDisturbSilent) {
+        rows.add(_FixRow(
+          title: 'Turn off Total silence',
+          detail: 'Do Not Disturb in Total silence mutes alarms. Use Priority or '
+              'Alarms only, or allow alarms in Do Not Disturb.',
+          action: 'Open',
+          onTap: () => run(service.openDoNotDisturbSettings),
+        ));
+      }
+      if (!health.alarmBuzzOn) {
+        rows.add(_FixRow(
+          title: 'Turn alarm ringing back on',
+          detail: 'Alarms are currently delivered as ordinary cards, so they '
+              'neither take over the screen nor keep buzzing.',
+          action: 'Turn on',
+          onTap: () => run(() async {
+            state.updateSettings(alarmBuzzEnabled: true);
+          }),
         ));
       }
 
