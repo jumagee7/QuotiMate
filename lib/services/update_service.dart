@@ -95,6 +95,13 @@ class UpdateService {
 
   static const String repo = 'jumagee7/QuotiMate';
   static const String _apiLatest = 'https://api.github.com/repos/$repo/releases/latest';
+  // The REST API allows only 60 unauthenticated reads per hour per IP. On a
+  // shared/CGNAT mobile network that budget is routinely exhausted, and the
+  // updater then fell back to its cache and kept offering the previous
+  // version. github.com HTML and the Atom feed are not rate-limited, so they
+  // are the fallback source of truth.
+  static const String _releasesAtom = 'https://github.com/$repo/releases.atom';
+  static const String _latestDownloadBase = 'https://github.com/$repo/releases/latest/download';
   static const String kAutoCheckKey = 'auto_check_updates';
   static const String _kCachedReleaseJson = 'cached_release_json';
   static const int _downloadNotifId = 9901;
@@ -122,24 +129,104 @@ class UpdateService {
   Future<AppRelease?> fetchLatest() async {
     final prefs = await SharedPreferences.getInstance();
 
-    try {
-      final res = await http
-          .get(Uri.parse(_apiLatest), headers: {'Accept': 'application/vnd.github.v3+json'})
-          .timeout(const Duration(seconds: 15));
-      if (res.statusCode == 200) {
-        final parsed = _parse(res.body);
-        if (parsed != null) {
-          await prefs.setString(_kCachedReleaseJson, res.body);
-          return parsed;
-        }
-      }
-    } catch (_) {
-      // Offline / DNS / timeout — use whatever we cached last.
+    final fromApi = await _fetchFromApi();
+    if (fromApi != null) {
+      await _cacheRelease(fromApi, prefs);
+      return fromApi;
+    }
+
+    // Rate-limited or blocked API: the Atom feed carries the same tag and
+    // notes without the per-IP budget.
+    final fromFeed = await _fetchFromFeed();
+    if (fromFeed != null) {
+      await _cacheRelease(fromFeed, prefs);
+      return fromFeed;
     }
 
     final cached = prefs.getString(_kCachedReleaseJson);
     return cached == null ? null : _parse(cached);
   }
+
+  Future<AppRelease?> _fetchFromApi() async {
+    try {
+      final res = await http
+          .get(Uri.parse(_apiLatest), headers: {
+            'Accept': 'application/vnd.github.v3+json',
+            'User-Agent': 'QuotiMate-updater',
+          })
+          .timeout(const Duration(seconds: 15));
+      if (res.statusCode != 200) return null;
+      final parsed = _parse(res.body);
+      if (parsed != null) return parsed;
+    } catch (_) {
+      // Offline / DNS / timeout / rate limit — try the feed next.
+    }
+    return null;
+  }
+
+  Future<AppRelease?> _fetchFromFeed() async {
+    try {
+      final res = await http
+          .get(Uri.parse(_releasesAtom), headers: {'User-Agent': 'QuotiMate-updater'})
+          .timeout(const Duration(seconds: 15));
+      if (res.statusCode != 200) return null;
+      return parseReleaseFeed(res.body);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Reads the newest entry of the releases Atom feed. The feed has no asset
+  /// list, so the APK URL is rebuilt from the tag using the release naming
+  /// convention (`QuotiMate-<tag>-arm64-v8a.apk`).
+  static AppRelease? parseReleaseFeed(String xml) {
+    final entry = RegExp(r'<entry>([\s\S]*?)</entry>').firstMatch(xml)?.group(1);
+    if (entry == null) return null;
+
+    final href = RegExp(r'<link rel="alternate"[^>]*href="([^"]*/releases/tag/[^"]+)"')
+        .firstMatch(entry)
+        ?.group(1);
+    if (href == null) return null;
+    final tag = href.split('/releases/tag/').last;
+    if (tag.isEmpty) return null;
+
+    final title = RegExp(r'<title>([\s\S]*?)</title>').firstMatch(entry)?.group(1) ??
+        'QuotiMate $tag';
+    final encodedNotes =
+        RegExp(r'<content type="html">([\s\S]*?)</content>').firstMatch(entry)?.group(1) ?? '';
+    final apkName = 'QuotiMate-$tag-arm64-v8a.apk';
+
+    return AppRelease(
+      tagName: tag,
+      name: _decodeEntities(title).trim(),
+      notes: _feedNotes(encodedNotes),
+      htmlUrl: href,
+      apkUrl: '$_latestDownloadBase/$apkName',
+      apkName: apkName,
+      apkBytes: 0,
+    );
+  }
+
+  /// The feed escapes its HTML body and stores block elements as tags; the
+  /// update dialog shows plain text, so unwrap both.
+  static String _feedNotes(String encoded) {
+    final html = _decodeEntities(encoded);
+    return html
+        .replaceAll(RegExp(r'<li>'), '• ')
+        .replaceAll(RegExp(r'</(p|li|h1|h2|h3|ul|ol|div)>'), '\n')
+        .replaceAll(RegExp(r'<[^>]+>'), '')
+        .replaceAll(RegExp(r'[ \t]+\n'), '\n')
+        .replaceAll(RegExp(r'\n{3,}'), '\n\n')
+        .trim();
+  }
+
+  static String _decodeEntities(String raw) => raw
+      .replaceAll('&lt;', '<')
+      .replaceAll('&gt;', '>')
+      .replaceAll('&quot;', '"')
+      .replaceAll('&#39;', "'")
+      .replaceAll('&#x27;', "'")
+      .replaceAll('&amp;', '&');
 
   AppRelease? _parse(String raw) {
     try {
@@ -147,6 +234,26 @@ class UpdateService {
       if (json is Map<String, dynamic>) return AppRelease.fromGitHub(json);
     } catch (_) {}
     return null;
+  }
+
+  /// Stores the release in the GitHub-shaped cache the offline path reads.
+  Future<void> _cacheRelease(AppRelease release, SharedPreferences prefs) async {
+    final json = jsonEncode({
+      'tag_name': release.tagName,
+      'name': release.name,
+      'body': release.notes,
+      'html_url': release.htmlUrl,
+      'assets': release.apkUrl == null
+          ? const []
+          : [
+              {
+                'name': release.apkName,
+                'browser_download_url': release.apkUrl,
+                'size': release.apkBytes,
+              }
+            ],
+    });
+    await prefs.setString(_kCachedReleaseJson, json);
   }
 
   /// Downloads [release]'s APK to the temp directory, reporting progress as a
