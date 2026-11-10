@@ -43,7 +43,9 @@ class _ProductsPageState extends State<ProductsPage> {
     return Container(
       color: _bg,
       child: ClipRRect(
-        child: Column(
+        child: Stack(
+          children: [
+            Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // ── Toolbar ─────────────────────────────────────────────────────────
@@ -82,18 +84,6 @@ class _ProductsPageState extends State<ProductsPage> {
                     ),
                     onChanged: (v) => setState(() => _search = v),
                   ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              FilledButton.icon(
-                onPressed: () => _showProductDialog(context, appState, null),
-                icon: const Icon(Icons.add, size: 18),
-                label: const Text('New Item', style: TextStyle(fontWeight: FontWeight.bold)),
-                style: FilledButton.styleFrom(
-                  backgroundColor: _gold,
-                  foregroundColor: Colors.black,
-                  padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                 ),
               ),
             ],
@@ -163,6 +153,7 @@ class _ProductsPageState extends State<ProductsPage> {
                           Expanded(
                             child: Scrollbar(
                               child: ListView.builder(
+                                padding: const EdgeInsets.only(bottom: 88),
                                 itemCount: filtered.length,
                                 itemBuilder: (context, idx) {
                                   final product = filtered[idx];
@@ -183,6 +174,19 @@ class _ProductsPageState extends State<ProductsPage> {
           ),
         ],
       ),
+            Positioned(
+              right: 0,
+              bottom: 16,
+              child: FloatingActionButton.extended(
+                onPressed: () => _showProductDialog(context, appState, null),
+                backgroundColor: _gold,
+                foregroundColor: Colors.black,
+                icon: const Icon(Icons.add_rounded),
+                label: const Text('New Item', style: TextStyle(fontWeight: FontWeight.bold)),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

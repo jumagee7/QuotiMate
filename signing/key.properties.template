@@ -1,0 +1,5 @@
+# Target: android/key.properties (git-ignored). restore_signing.sh writes this for you.
+storePassword=CHANGE_ME
+keyPassword=CHANGE_ME
+keyAlias=CHANGE_ME
+storeFile=keystore/quotimate-release.jks

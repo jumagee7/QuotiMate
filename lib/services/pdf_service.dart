@@ -1790,6 +1790,9 @@ class PdfService {
       pageFormat: PdfPageFormat.a4,
       margin: const pw.EdgeInsets.all(48),
       build: (ctx) {
+        // The certificate is added last, so every page already exists in the
+        // document by the time this builds — its own index is the total.
+        final totalPages = ctx.document.pdfPageList.pages.length;
         return pw.Column(
           crossAxisAlignment: pw.CrossAxisAlignment.start,
           children: [
@@ -1938,6 +1941,15 @@ class PdfService {
                 'The signature above constitutes binding acceptance of the terms and conditions '
                 'contained in $docType $docId. This certificate serves as proof of agreement.',
                 style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey700),
+              ),
+            ),
+
+            pw.Spacer(),
+            pw.Container(
+              alignment: pw.Alignment.center,
+              child: pw.Text(
+                'Page $totalPages of $totalPages',
+                style: const pw.TextStyle(color: PdfColors.grey600, fontSize: 8),
               ),
             ),
           ],

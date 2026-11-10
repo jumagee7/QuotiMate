@@ -1,5 +1,7 @@
+import java.io.File
 import java.io.FileInputStream
 import java.util.Properties
+import org.gradle.api.GradleException
 
 plugins {
     id("com.android.application")
@@ -9,13 +11,29 @@ plugins {
     id("com.google.gms.google-services")
 }
 
-// Release signing lives outside git (android/key.properties + android/keystore are ignored).
+// Release signing keys are git-ignored. android/key.properties is the primary copy;
+// signing/local/ is the local backup inside the project folder (see signing/README.md).
+val repoSigningDir = rootProject.projectDir.parentFile
+fun resolveSigningFile(path: String): File? =
+    listOf(rootProject.file(path), repoSigningDir.resolve(path)).firstOrNull { it.exists() }
+
 val keystoreProperties = Properties().apply {
-    val f = rootProject.file("key.properties")
-    if (f.exists()) load(FileInputStream(f))
+    val file = listOf(rootProject.file("key.properties"), repoSigningDir.resolve("signing/local/key.properties"))
+        .firstOrNull { it.exists() }
+    if (file != null) load(FileInputStream(file))
 }
-val hasReleaseKeystore = keystoreProperties.getProperty("storeFile") != null &&
-    rootProject.file(keystoreProperties.getProperty("storeFile")).exists()
+val resolvedStoreFile = keystoreProperties.getProperty("storeFile")?.let { resolveSigningFile(it) }
+val hasReleaseKeystore = resolvedStoreFile != null
+
+// A debug-signed release APK cannot update existing installs, so refuse to build
+// one instead of silently falling back.
+gradle.taskGraph.whenReady {
+    if (allTasks.any { it.name.contains("Release") } && !hasReleaseKeystore) {
+        throw GradleException(
+            "Release signing key not found. Restore it first: bash signing/restore_signing.sh"
+        )
+    }
+}
 
 android {
     namespace = "com.majumaink.quotimate"
@@ -43,7 +61,7 @@ android {
     signingConfigs {
         if (hasReleaseKeystore) {
             create("release") {
-                storeFile = rootProject.file(keystoreProperties.getProperty("storeFile"))
+                storeFile = resolvedStoreFile
                 storePassword = keystoreProperties.getProperty("storePassword")
                 keyAlias = keystoreProperties.getProperty("keyAlias")
                 keyPassword = keystoreProperties.getProperty("keyPassword")
@@ -53,12 +71,7 @@ android {
 
     buildTypes {
         release {
-            // Falls back to debug keys only when the release keystore is absent (fresh clone).
-            signingConfig = if (hasReleaseKeystore) {
-                signingConfigs.getByName("release")
-            } else {
-                signingConfigs.getByName("debug")
-            }
+            signingConfig = if (hasReleaseKeystore) signingConfigs.getByName("release") else null
             proguardFiles(getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro")
         }
     }

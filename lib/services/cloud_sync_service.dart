@@ -39,8 +39,6 @@ class CloudSyncService extends ChangeNotifier {
   /// collection, so one denied read does not mean the others failed.
   final Map<String, int> _collectionCounts = {};
   final Map<String, String> _collectionErrors = {};
-  Map<String, int> get collectionCounts => Map.unmodifiable(_collectionCounts);
-  Map<String, String> get collectionErrors => Map.unmodifiable(_collectionErrors);
 
   void _recordCount(String collection, int count) {
     final changed = _collectionCounts[collection] != count ||

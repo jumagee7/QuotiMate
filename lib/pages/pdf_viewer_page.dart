@@ -15,6 +15,8 @@ class PdfViewerPage extends StatefulWidget {
   final String filename;
   final Future<Uint8List> Function(PdfPageFormat format) buildPdf;
   final Quote? quote;
+  final Invoice? invoice;
+  final String? shareName;
   final VoidCallback? onEdit;
 
   const PdfViewerPage({
@@ -23,6 +25,8 @@ class PdfViewerPage extends StatefulWidget {
     required this.filename,
     required this.buildPdf,
     this.quote,
+    this.invoice,
+    this.shareName,
     this.onEdit,
   });
 
@@ -35,6 +39,7 @@ class PdfViewerPage extends StatefulWidget {
           title: 'Quotation ${quote.id}',
           filename: 'Quotation_${quote.id}.pdf',
           quote: quote,
+          shareName: '${quote.id} ${quote.clientName}',
           buildPdf: (format) => isSigned
               ? PdfService.generateSignedQuotePdf(
                   quote,
@@ -56,6 +61,8 @@ class PdfViewerPage extends StatefulWidget {
         builder: (_) => PdfViewerPage(
           title: 'Invoice ${invoice.id}',
           filename: 'Invoice_${invoice.id}.pdf',
+          invoice: invoice,
+          shareName: '${invoice.id} ${invoice.clientName}',
           buildPdf: (format) => isSigned
               ? PdfService.generateSignedInvoicePdf(
                   invoice,
@@ -75,6 +82,7 @@ class PdfViewerPage extends StatefulWidget {
     required String title,
     required String filename,
     required Future<Uint8List> Function(PdfPageFormat format) buildPdf,
+    String? shareName,
     VoidCallback? onEdit,
   }) {
     return Navigator.of(context).push(
@@ -83,6 +91,7 @@ class PdfViewerPage extends StatefulWidget {
           title: title,
           filename: filename,
           buildPdf: buildPdf,
+          shareName: shareName,
           onEdit: onEdit,
         ),
       ),
@@ -176,6 +185,9 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
           canChangePageFormat: false,
           canChangeOrientation: false,
           canDebug: false,
+          // Sharing lives in the app bar so the document has one share entry
+          // point; the preview action bar keeps only print.
+          allowSharing: false,
           pdfFileName: widget.filename,
           maxPageWidth: 700,
           previewPageMargin: const EdgeInsets.all(16),
@@ -230,8 +242,10 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
   }
 
   Future<void> _handleShare(BuildContext context) async {
-    // Show filename input dialog
-    final filenameCtrl = TextEditingController(text: widget.filename.replaceAll('.pdf', ''));
+    final defaultName = (widget.shareName?.trim().isNotEmpty ?? false)
+        ? widget.shareName!.trim()
+        : widget.filename.replaceAll(RegExp(r'\.pdf$', caseSensitive: false), '');
+    final filenameCtrl = TextEditingController(text: defaultName);
     
     final result = await showDialog<String>(
       context: context,

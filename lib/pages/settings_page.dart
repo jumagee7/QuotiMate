@@ -181,26 +181,6 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
                 const SizedBox(height: 12),
                 _buildTextField('Default Expiry (Days)', appState.defaultExpiryDays.toString(), (val) => appState.updateSettings(defaultExpiryDays: int.tryParse(val) ?? 30)),
-                const SizedBox(height: 16),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: ElevatedButton.icon(
-                    onPressed: () {
-                      if (_formKey.currentState!.validate()) {
-                        _formKey.currentState!.save();
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Settings saved'),
-                            backgroundColor: Color(0xFF19233E),
-                          ),
-                        );
-                      }
-                    },
-                    icon: const Icon(Icons.save),
-                    label: const Text('Save Settings'),
-                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFFC107), foregroundColor: Colors.black),
-                  ),
-                ),
               ],
             ),
           ),
@@ -672,8 +652,39 @@ class _SettingsPageState extends State<SettingsPage> {
             ],
           ),
         ),
+        const SizedBox(height: 16),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton.icon(
+            onPressed: _saveAllSettings,
+            icon: const Icon(Icons.save_rounded, size: 18),
+            label: const Text('Save All Settings', style: TextStyle(fontWeight: FontWeight.bold)),
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFFFC107),
+              foregroundColor: Colors.black,
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+          ),
+        ),
         const SizedBox(height: 24),
       ],
+    );
+  }
+
+  /// Editors save as you type; this is the single explicit commit for the page
+  /// and forces the whole settings block to local storage and the cloud.
+  Future<void> _saveAllSettings() async {
+    final appState = AppStateProvider.of(context);
+    _formKey.currentState?.validate();
+    _formKey.currentState?.save();
+    await appState.saveAllSettings();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('All settings saved'),
+        backgroundColor: Color(0xFF19233E),
+      ),
     );
   }
 
@@ -1050,93 +1061,9 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
               ],
             ),
-            const SizedBox(height: 12),
-            _buildCloudAreaStatus(),
           ],
         ),
       ),
-    );
-  }
-
-  static const Map<String, String> _cloudAreas = {
-    'quotations': 'Quotations',
-    'invoices': 'Invoices',
-    'clients': 'Clients',
-    'products': 'Catalogue',
-    'tasks': 'Tasks',
-    'schedules': 'Schedules',
-    'projects': 'Projects',
-    'settings': 'Settings',
-  };
-
-  /// What actually came back from Firestore this session, area by area.
-  /// Without this, a denied collection is indistinguishable from an empty one
-  /// because local cache keeps showing the old records.
-  Widget _buildCloudAreaStatus() {
-    return AnimatedBuilder(
-      animation: CloudSyncService(),
-      builder: (context, _) {
-        final sync = CloudSyncService();
-        final counts = sync.collectionCounts;
-        final errors = sync.collectionErrors;
-        final signedIn = AuthService().isFirebaseSignedIn;
-
-        return Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: const Color(0xFF131722),
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: const Color(0xFF2A3045)),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Cloud data retrieved this session',
-                style: TextStyle(color: Color(0xFF8A92A6), fontSize: 11, fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 8),
-              if (!signedIn)
-                const Text(
-                  'No Firebase session — local data only. Sign in with Google to sync.',
-                  style: TextStyle(color: Color(0xFFFFC107), fontSize: 11, height: 1.4),
-                )
-              else
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: [
-                    for (final area in _cloudAreas.entries)
-                      _cloudAreaPill(
-                        area.value,
-                        error: errors[area.key],
-                        count: counts[area.key],
-                      ),
-                  ],
-                ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _cloudAreaPill(String label, {String? error, int? count}) {
-    final denied = error != null;
-    final color = denied
-        ? const Color(0xFFFF6B6B)
-        : count != null
-            ? const Color(0xFF10B981)
-            : const Color(0xFF616C88);
-    final text = denied ? '$label denied' : count != null ? '$label $count' : '$label …';
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: color.withValues(alpha: 0.35)),
-      ),
-      child: Text(text, style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w600)),
     );
   }
 

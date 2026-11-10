@@ -1113,6 +1113,30 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
+  /// Backs the single Save action in Settings: writes the whole settings block
+  /// to local storage and the cloud in one pass.
+  Future<void> saveAllSettings() async {
+    await _save();
+    await CloudSyncService().saveSettings({
+      'companyName': companyName,
+      'companyPhone': companyPhone,
+      'companyEmail': companyEmail,
+      'companyAddress': companyAddress,
+      'companyKraPin': companyKraPin,
+      'preparedBy': preparedBy,
+      'defaultExpiryDays': defaultExpiryDays,
+      'currency': currency,
+      'pdfTemplate': pdfTemplate,
+      'defaultVatPercent': defaultVatPercent,
+      'defaultPaymentTerms': defaultPaymentTerms,
+      'defaultNotes': defaultNotes,
+      'notificationsEnabled': notificationsEnabled,
+      'alarmBuzzEnabled': alarmBuzzEnabled,
+      'nextQuoteNumber': nextQuoteNumber,
+    });
+    notifyListeners();
+  }
+
   void resetSettings() {
     companyName = 'MODERN EDGE';
     companyEmail = 'jumaink20@gmail.com';

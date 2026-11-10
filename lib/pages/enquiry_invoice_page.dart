@@ -1009,11 +1009,13 @@ class _EnquiryInvoicePageState extends State<EnquiryInvoicePage> {
     _saveInvoice(closeAfter: false);
     final rawNo = _quotationNoCtrl.text.trim().isEmpty ? 'INV-001' : _quotationNoCtrl.text.trim();
     final safeNo = rawNo.replaceAll(RegExp(r'[^\w\.-]'), '_');
+    final customer = _customerNameCtrl.text.trim();
 
     PdfViewerPage.openDocumentPdf(
       context: context,
       title: 'Enquiry Invoice $rawNo',
       filename: 'Enquiry_Invoice_$safeNo.pdf',
+      shareName: customer.isEmpty ? rawNo : '$rawNo $customer',
       buildPdf: _buildPdfBytes,
     );
   }

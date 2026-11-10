@@ -84,7 +84,9 @@ class _InvoicesPageState extends State<InvoicesPage> {
     final overdueCount = appState.invoices.where((i) => i.status == InvoiceStatus.overdue).length;
     final outstanding  = totalAmount - paidAmount;
 
-    return Column(
+    return Stack(
+      children: [
+        Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         // ── KPI Strip ───────────────────────────────────────────────────────
@@ -168,18 +170,6 @@ class _InvoicesPageState extends State<InvoicesPage> {
                 _sortMenuItem(InvoiceSort.status, 'Status', Icons.flag_outlined),
               ],
             ),
-            const SizedBox(width: 8),
-            FilledButton.icon(
-              onPressed: () => openEnquiryInvoicePage(context, appState),
-              icon: const Icon(Icons.add, size: 18),
-              label: const Text('Enquiry Invoice', style: TextStyle(fontWeight: FontWeight.bold)),
-              style: FilledButton.styleFrom(
-                backgroundColor: _gold,
-                foregroundColor: Colors.black,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              ),
-            ),
           ],
         ),
         const SizedBox(height: 12),
@@ -219,6 +209,7 @@ class _InvoicesPageState extends State<InvoicesPage> {
                   ),
                 )
               : ListView.builder(
+                  padding: const EdgeInsets.only(bottom: 88),
                   itemCount: filtered.length,
                   itemBuilder: (context, index) {
                     final invoice = filtered[index];
@@ -233,6 +224,19 @@ class _InvoicesPageState extends State<InvoicesPage> {
                     );
                   },
                 ),
+        ),
+      ],
+    ),
+        Positioned(
+          right: 0,
+          bottom: 16,
+          child: FloatingActionButton.extended(
+            onPressed: () => openEnquiryInvoicePage(context, appState),
+            backgroundColor: _gold,
+            foregroundColor: Colors.black,
+            icon: const Icon(Icons.add_rounded),
+            label: const Text('Enquiry Invoice', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
         ),
       ],
     );
@@ -502,6 +506,9 @@ class _InvoicesPageState extends State<InvoicesPage> {
       context: context,
       title: 'Invoice ${invoice.id}',
       filename: 'Invoice_$safeNo.pdf',
+      shareName: invoice.clientName.trim().isEmpty
+          ? invoice.id
+          : '${invoice.id} ${invoice.clientName}',
       onEdit: () => openEnquiryInvoicePage(context, appState, invoice: invoice),
       buildPdf: (pageFormat) async {
         if (isSigned) {

@@ -83,3 +83,9 @@ recover*.py
 scratch/
 desktop.ini
 fix_literals.py
+
+# Signing material — local key copies never leave the machine (see signing/README.md)
+signing/*.jks
+signing/*.keystore
+signing/key.properties
+signing/local/
